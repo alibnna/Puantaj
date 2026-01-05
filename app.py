@@ -1027,8 +1027,8 @@ def main():
     if 'metrikler' not in st.session_state:
         st.session_state.metrikler = {}
 
-    st.title("📊 Puantaj Otomasyon Sistemi")
-    st.info("Kullanıcıya özel izole çalışma alanı aktif.")
+    st.title("📊 Puantaj Otomasyon Sistemi - <3")
+    st.info("Kullanıcıya özel izole çalışma alanı aktif. Umarım düzgün çalışır :)")
 
     # Mevcut kullanıcıya özel dinamik yolları al
     paths = Config.get_paths()
