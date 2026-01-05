@@ -615,24 +615,22 @@ class BordroReader:
 # ============================================================================
 # 6. EXCEL ÜRETICI
 # ============================================================================
-class ExcelGenerator:
-        """Excel raporları oluşturur"""
-        @staticmethod
-        def gorsel_puantaj_olustur(temiz_veri_yolu, cikti_klasoru):
-            """Görsel puantaj Excel'i oluşturur"""
-            print("\n" + "="*60)
-            print("📊 GÖRSEL PUANTAJ")
-            print("="*60)
-    
-            df = pd.read_excel(temiz_veri_yolu)
-            df['Tarih'] = pd.to_datetime(df['Tarih'])
-            df['Hafta_Basi'] = df['Tarih'].apply(lambda x: x - timedelta(days=x.weekday()))
-            df['Hafta_Sonu'] = df['Hafta_Basi'] + timedelta(days=6)
-    
-            # Agresif Karakter Temizleme Fonksiyonu
+@staticmethod
+    def gorsel_puantaj_olustur(temiz_veri_yolu, cikti_klasoru):
+        """Görsel puantaj Excel'i oluşturur"""
+        print("\n" + "="*60)
+        print("📊 GÖRSEL PUANTAJ")
+        print("="*60)
+
+        df = pd.read_excel(temiz_veri_yolu)
+        df['Tarih'] = pd.to_datetime(df['Tarih'])
+        df['Hafta_Basi'] = df['Tarih'].apply(lambda x: x - timedelta(days=x.weekday()))
+        df['Hafta_Sonu'] = df['Hafta_Basi'] + timedelta(days=6)
+
+        # Agresif Karakter Temizleme Fonksiyonu
         def temizle_metin(s):
             s = str(s).strip().upper()
-            s = s.replace('Ý', 'I').replace('Þ', 'S').replace('Ð', 'G').replace('Þ', 'S')
+            s = s.replace('Ý', 'I').replace('Þ', 'S').replace('Ð', 'G')
             s = s.replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U').replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C')
             return s
         
@@ -642,9 +640,9 @@ class ExcelGenerator:
             
         def analiz_et(row):
             tarih = row['Tarih'].date()
-            # PG (Durum) ve GUN sütunlarını temizleyerek oku
-            pg = temizle_metin(row.get('Pg.', ''))
-            gun = temizle_metin(row.get('Gün', ''))
+            # Artık sütunlar önceden temizlenmiş durumda
+            pg = str(row.get('Pg.', '')).upper()
+            gun = str(row.get('Gün', '')).upper()
             
             calisti = (str(row['Giriş']) not in ['nan', '', 'NaT'] and
                       str(row['Çıkış']) not in ['nan', '', 'NaT'])
@@ -1140,7 +1138,7 @@ def main():
             with open(p_yolu, "rb") as f:
                 c2.download_button("📊 Görsel Puantaj", f, file_name="Puantaj.xlsx", key="dl_puan_btn")
 
-def auto_garbage_collector(max_age_seconds=72): # 7200 saniye = 2 Saat
+def auto_garbage_collector(max_age_seconds=1800): # 7200 saniye = 2 Saat
     """
     UserData klasöründeki eski oturum verilerini temizler.
     Kullanıcı sekmeyi kapatsa bile sunucuda yer açılmasını sağlar.
