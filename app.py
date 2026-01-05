@@ -618,24 +618,28 @@ class BordroReader:
 class ExcelGenerator:
     """Excel raporları oluşturur"""
 
-    @staticmethod
-    def gorsel_puantaj_olustur(temiz_veri_yolu, cikti_klasoru):
-        """Görsel puantaj Excel'i oluşturur"""
-        print("\n" + "="*60)
-        print("📊 GÖRSEL PUANTAJ")
-        print("="*60)
-
-        df = pd.read_excel(temiz_veri_yolu)
-        df['Tarih'] = pd.to_datetime(df['Tarih'])
-        df['Hafta_Basi'] = df['Tarih'].apply(lambda x: x - timedelta(days=x.weekday()))
-        df['Hafta_Sonu'] = df['Hafta_Basi'] + timedelta(days=6)
-
-        # Agresif Karakter Temizleme Fonksiyonu
+        @staticmethod
+        def gorsel_puantaj_olustur(temiz_veri_yolu, cikti_klasoru):
+            """Görsel puantaj Excel'i oluşturur"""
+            print("\n" + "="*60)
+            print("📊 GÖRSEL PUANTAJ")
+            print("="*60)
+    
+            df = pd.read_excel(temiz_veri_yolu)
+            df['Tarih'] = pd.to_datetime(df['Tarih'])
+            df['Hafta_Basi'] = df['Tarih'].apply(lambda x: x - timedelta(days=x.weekday()))
+            df['Hafta_Sonu'] = df['Hafta_Basi'] + timedelta(days=6)
+    
+            # Agresif Karakter Temizleme Fonksiyonu
         def temizle_metin(s):
             s = str(s).strip().upper()
             s = s.replace('Ý', 'I').replace('Þ', 'S').replace('Ð', 'G').replace('Þ', 'S')
             s = s.replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U').replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C')
             return s
+        
+        # KRİTİK: Gün ve Pg sütunlarını HEMEN temizle
+        df['Gün'] = df['Gün'].apply(temizle_metin)
+        df['Pg.'] = df['Pg.'].apply(temizle_metin)
             
         def analiz_et(row):
             tarih = row['Tarih'].date()
