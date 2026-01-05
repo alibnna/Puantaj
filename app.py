@@ -630,10 +630,19 @@ class ExcelGenerator:
         df['Hafta_Basi'] = df['Tarih'].apply(lambda x: x - timedelta(days=x.weekday()))
         df['Hafta_Sonu'] = df['Hafta_Basi'] + timedelta(days=6)
 
+        # Agresif Karakter Temizleme Fonksiyonu
+        def temizle_metin(s):
+            s = str(s).strip().upper()
+            s = s.replace('Ý', 'I').replace('Þ', 'S').replace('Ð', 'G').replace('Þ', 'S')
+            s = s.replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U').replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C')
+            return s
+            
         def analiz_et(row):
             tarih = row['Tarih'].date()
-            pg = str(row['Pg.']).upper()
-            gun = row['Gün']
+            # PG (Durum) ve GUN sütunlarını temizleyerek oku
+            pg = temizle_metin(row.get('Pg.', ''))
+            gun = temizle_metin(row.get('Gün', ''))
+            
             calisti = (str(row['Giriş']) not in ['nan', '', 'NaT'] and
                       str(row['Çıkış']) not in ['nan', '', 'NaT'])
             is_gece = False
@@ -644,12 +653,14 @@ class ExcelGenerator:
             if Config.MINIMUM_SURE_GARANTISI and calisti and 0 < puan < 7.5:
                 puan = 7.5
             durum = "NORMAL"
-            if "HAFTA TATİLİ" in pg or gun == 'Pazar':
+            # Eşleşmeleri temizlenmiş metinler üzerinden yapıyoruz
+            if "HAFTA TATILI" in pg or gun == 'PAZAR':
                 durum = "HT"
             elif StaticHolidays.is_arefe(tarih):
                 durum = "AREFE"
-            elif StaticHolidays.is_ubgt(tarih) or "GENEL TATİL" in pg:
+            elif StaticHolidays.is_ubgt(tarih) or "GENEL TATIL" in pg:
                 durum = "UBGT"
+            
             val = puan if calisti else Config.HAFTA_TATILI_ISARETI
             return pd.Series([durum, val, puan, is_gece])
 
