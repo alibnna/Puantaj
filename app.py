@@ -400,11 +400,60 @@ class PayrollEngine:
             return float(tam) + 1.0
 
     @staticmethod
-    def gece_calismasi_mi(giris_saati_str):
+    def gece_calismasi_mi(giris, cikis):
+        """
+        Postalar Halinde İşçi Çalıştırılması Yönetmeliği Madde 7 uyarınca:
+        Çalışma süresinin YARISINDAN ÇOĞU gece dönemine (20:00 - 06:00) 
+        denk geliyorsa, bu çalışma 'Gece Çalışması' sayılır.
+        """
         try:
-            saat = pd.to_datetime(str(giris_saati_str), format="%H:%M").hour
-            return (saat >= 20 or saat < 6)
-        except:
+            # Veri boşsa False dön
+            if pd.isna(giris) or pd.isna(cikis):
+                return False
+            
+            # String verileri saat objesine çevir
+            str_giris = str(giris).strip()
+            str_cikis = str(cikis).strip()
+            if not str_giris or not str_cikis:
+                return False
+
+            fmt = "%H:%M" if len(str_giris) <= 5 else "%H:%M:%S"
+            g_dt = datetime.strptime(str_giris[:5], "%H:%M")
+            c_dt = datetime.strptime(str_cikis[:5], "%H:%M")
+
+            # Gece yarısı geçişini yönet (Örn: 22:00 giriş, 02:00 çıkış)
+            if c_dt < g_dt:
+                c_dt += timedelta(days=1)
+
+            # 1. Toplam Çalışma Süresini Bul (Saniye cinsinden)
+            total_seconds = (c_dt - g_dt).total_seconds()
+            
+            if total_seconds <= 0:
+                return False
+
+            # 2. İlgili Gece Dönemini Belirle (20:00 - 06:00)
+            # Eğer vardiya öğlen 12'den sonra başladıysa, bugünün gecesi baz alınır.
+            # Eğer vardiya sabah 04:00 gibi başladıysa, bir önceki günün gecesi baz alınır.
+            if g_dt.hour >= 12:
+                night_start = g_dt.replace(hour=20, minute=0, second=0)
+            else:
+                night_start = (g_dt - timedelta(days=1)).replace(hour=20, minute=0, second=0)
+            
+            night_end = night_start + timedelta(hours=10) # 20:00 + 10 saat = 06:00
+
+            # 3. Kesişimi (Overlap) Hesapla
+            latest_start = max(g_dt, night_start)
+            earliest_end = min(c_dt, night_end)
+            
+            overlap = (earliest_end - latest_start).total_seconds()
+            overlap = max(0.0, overlap) # Negatif çıkarsa 0 yap
+
+            # 4. KARAR ANI: Gece süresi, toplam sürenin yarısından fazla mı?
+            return overlap > (total_seconds / 2)
+
+        except Exception as e:
+            # Beklenmedik bir hata olursa güvenli tarafta kalıp False dönelim
+            # print(f"Hata: {e}") 
             return False
 
     @staticmethod
