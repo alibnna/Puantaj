@@ -331,40 +331,36 @@ class ETLWorker:
 
     @classmethod
     def calistir_etl(cls, ham_klasor, hedef_klasor, hedef_dosya):
-        print("\n" + "="*60)
-        print("📄 HAM VERİLER TEMİZLENİYOR")
-        print("="*60)
-
+        st.write("🔍 ETL Süreci Başladı...")
         dosyalar = glob.glob(os.path.join(ham_klasor, "*"))
-        st.write(f"📁 Klasörde {len(dosyalar)} dosya bulundu.")
-        if len(dosyalar) == 0:
-            st.error("Klasör boş, dosyalar yazılmamış!")
-            return None
+        
+        # LOG A: Dosya sayısı kontrolü
+        st.write(f"📂 Ham veri klasöründeki toplam dosya sayısı: {len(dosyalar)}")
+        
         tum_veriler = []
 
         for dosya in dosyalar:
             if dosya.lower().endswith(('.xls', '.xlsx', '.csv')):
-                print(f"   -> {os.path.basename(dosya)}")
+                st.write(f"📖 Okunan dosya: {os.path.basename(dosya)}")
                 df = cls.dosya_temizle(dosya)
+                
                 if df is not None and len(df) > 0:
                     tum_veriler.append(df)
-                    print(f"      ✓ {len(df)} kayıt")
+                    st.write(f"✅ {os.path.basename(dosya)} içinden {len(df)} satır alındı.")
+                else:
+                    # LOG B: Dosya neden boş döndü?
+                    st.warning(f"⚠️ {os.path.basename(dosya)} işlenemedi veya boş. Formatı kontrol edin.")
 
         if tum_veriler:
             ana_df = pd.concat(tum_veriler, ignore_index=True).sort_values(by='Tarih')
-            for col in ana_df.select_dtypes(include=['object']).columns:
-                ana_df[col] = ana_df[col].apply(cls.turkce_karakter_duzelt)
-
             cikti_yolu = os.path.join(hedef_klasor, hedef_dosya)
             ana_df.to_excel(cikti_yolu, index=False)
-            print(f"✅ Temiz veri: {cikti_yolu}")
-            print(f"   Toplam {len(ana_df)} kayıt\n")
             return cikti_yolu
         else:
-            print("❌ Veri yok")
+            # LOG C: Neden başarısız oldu?
+            st.error("❌ Hiçbir dosyadan geçerli veri çekilemedi! (Sütun isimleri veya 'skiprows' hatalı olabilir)")
             return None
-
-
+            
 # ============================================================================
 # 4. BORDRO MOTORU
 # ============================================================================
