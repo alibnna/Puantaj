@@ -698,7 +698,7 @@ class ExcelGenerator:
                       str(row['Çıkış']) not in ['nan', '', 'NaT'])
             is_gece = False
             if calisti:
-                is_gece = PayrollEngine.gece_calismasi_mi(row['Giriş'])
+                is_gece = PayrollEngine.gece_calismasi_mi(row['Giriş'], row['Çıkış'])
             ham = PayrollEngine.saat_farki_hesapla_net(row['Giriş'], row['Çıkış'])
             puan = PayrollEngine.ozel_yuvarlama(ham)
             if Config.MINIMUM_SURE_GARANTISI and calisti and 0 < puan < 7.5:
@@ -883,7 +883,7 @@ class ExcelGenerator:
                 durum = "AREFE"
             elif StaticHolidays.is_ubgt(tarih) or "GENEL TATİL" in pg:
                 durum = "UBGT"
-            gece = PayrollEngine.gece_calismasi_mi(row['Giriş'])
+            gece = PayrollEngine.gece_calismasi_mi(row['Giriş'], row['Çıkış'])
             return pd.Series([durum, puan, gece])
 
         df[['Durum', 'Saat', 'Gece']] = df.apply(analiz, axis=1)
