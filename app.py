@@ -265,59 +265,60 @@ class ETLWorker:
     @classmethod
     def dosya_temizle(cls, dosya_yolu):
         try:
-            # Excel'i oku
+            # .xls dosyaları için xlrd, .xlsx için openpyxl kullanılır
             if dosya_yolu.endswith('.xls'):
                 df = pd.read_excel(dosya_yolu, skiprows=7, engine='xlrd')
             else:
                 df = pd.read_excel(dosya_yolu, skiprows=7)
-    
-            # SÜTUN TEMİZLİĞİ: Boşlukları sil, hepsini büyük harfe çevir, Türkçe karakterleri normalize et
-            df.columns = [str(col).strip().upper()
-                          .replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U')
-                          .replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C') 
-                          for col in df.columns]
-    
-            # ESNEK SÜTUN ARAMA
+
+            # SÜTUN NORMALİZASYONU (Loglardaki bozuk karakterleri düzeltiyoruz)
+            def sutun_duzelt(s):
+                s = str(s).upper().strip()
+                # Loglarda görülen spesifik bozukluklar
+                s = s.replace('GIRIÞ', 'GIRIS').replace('CÝKÝÞ', 'CIKIS')
+                s = s.replace('ADÝ', 'ADI').replace('SOYADÝ', 'SOYADI')
+                s = s.replace('GÜN', 'GUN').replace('TARIH', 'TARIH')
+                # Genel karakter temizliği
+                s = s.replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U').replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C')
+                return s
+
+            df.columns = [sutun_duzelt(col) for col in df.columns]
+
+            # ESNEK SÜTUN YAKALAMA
             giris_cols = [c for c in df.columns if 'GIRIS' in c]
             cikis_cols = [c for c in df.columns if 'CIKIS' in c]
             tarih_cols = [c for c in df.columns if 'TARIH' in c]
-    
+            ad_cols = [c for c in df.columns if 'ADI' in c or 'SOYADI' in c]
+            ng_cols = [c for c in df.columns if 'N.G' in c or 'NG' in c]
+            nc_cols = [c for c in df.columns if 'N.C' in c or 'NC' in c]
+
             if not giris_cols or not cikis_cols:
-                st.warning(f"Sütunlar bulunamadı! Mevcut sütunlar: {list(df.columns)}")
+                st.warning(f"Sütunlar eşleşmedi! Mevcut: {list(df.columns)}")
                 return None
-    
-            # Tarih sütununu belirle
-            tarih_col = tarih_cols[0] if tarih_cols else df.columns[2]
-    
-            # ... (Geri kalan temizleme mantığı aynı kalabilir ama sütun isimlerini yukarıdaki yeni formatla eşleştirin)
+
+            # Veri tiplerini temizle ve dönüştür
+            tarih_col = tarih_cols[0]
             df = df.dropna(subset=[tarih_col])
             df['Temp_Date'] = pd.to_datetime(df[tarih_col], dayfirst=True, errors='coerce')
             df = df.dropna(subset=['Temp_Date'])
 
-            df[['Final_Giris', 'Final_Cikis', 'Final_NG', 'Final_NC']] = df.apply(
-                lambda row: cls.satir_bazli_veri_al(row, giris_sutunlari, cikis_sutunlari, ng_col, nc_col),
-                axis=1
-            )
-
-            ad_col = [c for c in df.columns if 'Ad' in c and 'Soyad' in c]
+            # Final DataFrame Oluşturma
             clean_df = pd.DataFrame()
-            clean_df['Adı Soyadı'] = df[ad_col[0]] if ad_col else "Bilinmeyen"
+            clean_df['Adı Soyadı'] = df[ad_cols[0]] if ad_cols else "Bilinmeyen"
             clean_df['Tarih'] = df['Temp_Date']
-            clean_df['Gün'] = df[gun_col] if gun_col else ""
-            clean_df['Pg.'] = df[pg_col] if pg_col else ""
-            clean_df['N.G.'] = df['Final_NG']
-            clean_df['N.Ç.'] = df['Final_NC']
-            clean_df['Giriş'] = df['Final_Giris']
-            clean_df['Çıkış'] = df['Final_Cikis']
+            clean_df['Gün'] = df['GUN'] if 'GUN' in df.columns else ""
+            clean_df['Pg.'] = df['PG.'] if 'PG.' in df.columns else ""
+            clean_df['N.G.'] = df[ng_cols[0]] if ng_cols else None
+            clean_df['N.Ç.'] = df[nc_cols[0]] if nc_cols else None
+            clean_df['Giriş'] = df[giris_cols[0]]
+            clean_df['Çıkış'] = df[cikis_cols[0]]
 
-            for col in clean_df.select_dtypes(include=['object']).columns:
-                clean_df[col] = clean_df[col].apply(cls.turkce_karakter_duzelt)
-
+            # Boş olmayanları al
             clean_df = clean_df[(clean_df['Giriş'].notna()) | (clean_df['N.G.'].notna())]
             return clean_df
 
         except Exception as e:
-            print(f"⚠️ Hata ({os.path.basename(dosya_yolu)}): {e}")
+            st.error(f"⚠️ Dosya işleme hatası ({os.path.basename(dosya_yolu)}): {e}")
             return None
 
     @classmethod
