@@ -273,13 +273,14 @@ class ETLWorker:
 
             # SÜTUN NORMALİZASYONU (Loglardaki bozuk karakterleri düzeltiyoruz)
             def sutun_duzelt(s):
-                s = str(s).upper().strip()
-                # Loglarda görülen spesifik bozukluklar
-                s = s.replace('GIRIÞ', 'GIRIS').replace('CÝKÝÞ', 'CIKIS')
-                s = s.replace('ADÝ', 'ADI').replace('SOYADÝ', 'SOYADI')
-                s = s.replace('GÜN', 'GUN').replace('TARIH', 'TARIH')
-                # Genel karakter temizliği
-                s = s.replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U').replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C')
+                s = str(s).strip().upper()
+                # Loglarda görülen en inatçı bozuk karakterleri doğrudan hedef alıyoruz
+                s = s.replace('CÝKÝÞ', 'CIKIS')
+                s = s.replace('GIRIÞ', 'GIRIS')
+                s = s.replace('Ý', 'I').replace('Þ', 'S').replace('Ð', 'G')
+                # Standart Türkçe karakter temizliği
+                s = s.replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U')
+                s = s.replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C')
                 return s
 
             df.columns = [sutun_duzelt(col) for col in df.columns]
