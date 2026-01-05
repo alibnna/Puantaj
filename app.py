@@ -265,40 +265,31 @@ class ETLWorker:
     @classmethod
     def dosya_temizle(cls, dosya_yolu):
         try:
-            df = None
-            encodings = ['cp1254', 'iso-8859-9', 'latin5', 'utf-8', 'windows-1254']
-
-            if dosya_yolu.endswith('.csv'):
-                for enc in encodings:
-                    try:
-                        df = pd.read_csv(dosya_yolu, skiprows=7, encoding=enc, engine='python', sep=None)
-                        break
-                    except:
-                        continue
-                if df is None:
-                    return None
+            # Excel'i oku
+            if dosya_yolu.endswith('.xls'):
+                df = pd.read_excel(dosya_yolu, skiprows=7, engine='xlrd')
             else:
                 df = pd.read_excel(dosya_yolu, skiprows=7)
-
-            df.columns = [cls.turkce_karakter_duzelt(str(col)) for col in df.columns]
-            text_cols = df.select_dtypes(include=['object']).columns
-            for col in text_cols:
-                df[col] = df[col].apply(cls.turkce_karakter_duzelt)
-
-            giris_sutunlari = [c for c in df.columns if 'Giriş' in c or 'Giris' in c]
-            cikis_sutunlari = [c for c in df.columns if 'Çıkış' in c or 'Cikis' in c]
-            pg_col = next((c for c in df.columns if 'Pg' in c or 'Posta' in c), None)
-            gun_col = next((c for c in df.columns if 'Gün' in c or 'Gun' in c), None)
-
-            ng_col = None
-            nc_col = None
-            for c in df.columns:
-                if any(x in c.upper() for x in ['N.G', 'NG', 'VARDIYA BAS', 'VARDIYA BAŞ']):
-                    ng_col = c
-                if any(x in c.upper() for x in ['N.Ç', 'N.C', 'NC', 'VARDIYA BIT']):
-                    nc_col = c
-
-            tarih_col = 'Tarih' if 'Tarih' in df.columns else df.columns[2]
+    
+            # SÜTUN TEMİZLİĞİ: Boşlukları sil, hepsini büyük harfe çevir, Türkçe karakterleri normalize et
+            df.columns = [str(col).strip().upper()
+                          .replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U')
+                          .replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C') 
+                          for col in df.columns]
+    
+            # ESNEK SÜTUN ARAMA
+            giris_cols = [c for c in df.columns if 'GIRIS' in c]
+            cikis_cols = [c for c in df.columns if 'CIKIS' in c]
+            tarih_cols = [c for c in df.columns if 'TARIH' in c]
+    
+            if not giris_cols or not cikis_cols:
+                st.warning(f"Sütunlar bulunamadı! Mevcut sütunlar: {list(df.columns)}")
+                return None
+    
+            # Tarih sütununu belirle
+            tarih_col = tarih_cols[0] if tarih_cols else df.columns[2]
+    
+            # ... (Geri kalan temizleme mantığı aynı kalabilir ama sütun isimlerini yukarıdaki yeni formatla eşleştirin)
             df = df.dropna(subset=[tarih_col])
             df['Temp_Date'] = pd.to_datetime(df[tarih_col], dayfirst=True, errors='coerce')
             df = df.dropna(subset=['Temp_Date'])
