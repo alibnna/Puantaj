@@ -1008,7 +1008,7 @@ import shutil
 from datetime import datetime
 
 # --- TASARIM AYARLARI ---
-st.set_page_config(page_title="Puantaj Otomasyon Sistemi", layout="wide")
+st.set_page_config(page_title="Puantaj Otomasyon Sistemi - <3", layout="wide")
 
 # .tsx dosyanızdaki görsel dili yakalamak için özel CSS
 st.markdown("""
