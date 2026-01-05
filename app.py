@@ -616,8 +616,7 @@ class BordroReader:
 # 6. EXCEL ÜRETICI
 # ============================================================================
 class ExcelGenerator:
-    """Excel raporları oluşturur"""
-
+        """Excel raporları oluşturur"""
         @staticmethod
         def gorsel_puantaj_olustur(temiz_veri_yolu, cikti_klasoru):
             """Görsel puantaj Excel'i oluşturur"""
