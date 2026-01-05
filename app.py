@@ -668,8 +668,15 @@ class ExcelGenerator:
 
         df[['Durum', 'Puan_Degeri', 'Final_Hesap', 'Gece_Mi']] = df.apply(analiz_et, axis=1)
 
+        # KRİTİK: Pivot için gün isimlerini Config ile eşleştir
+        # Config.GUN_ISIMLERI = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar']
+        # Ama DataFrame'de temizlenmiş halleri var: ['PAZARTESI', 'SALI', 'CARSAMBA', ...]
+        
         pivot = df.pivot_table(index=['Hafta_Basi', 'Hafta_Sonu'], columns='Gün', values='Puan_Degeri', aggfunc='first')
-        pivot = pivot.reindex(columns=Config.GUN_ISIMLERI, fill_value="x").fillna("x").reset_index()
+        
+        # Temizlenmiş gün isimlerini kullan
+        temiz_gun_isimleri = [g.upper().replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U').replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C') for g in Config.GUN_ISIMLERI]
+        pivot = pivot.reindex(columns=temiz_gun_isimleri, fill_value="x").fillna("x").reset_index()
 
         def hesapla_haftalik(row):
             h_basi = row['Hafta_Basi']
@@ -706,7 +713,8 @@ class ExcelGenerator:
         pivot['D_Bas'] = pivot['Hafta_Basi'].dt.strftime('%d.%m.%Y')
         pivot['D_Bit'] = pivot['Hafta_Sonu'].dt.strftime('%d.%m.%Y')
 
-        final_cols = ['D_Bas', 'D_Bit'] + Config.GUN_ISIMLERI + ['Haftalık Ç.S.', 'FM Saati', 'UBGT', 'HT']
+        # Final sütunları: Temizlenmiş gün isimleriyle
+        final_cols = ['D_Bas', 'D_Bit'] + temiz_gun_isimleri + ['Haftalık Ç.S.', 'FM Saati', 'UBGT', 'HT']
 
         ad = df['Adı Soyadı'].dropna().iloc[0]
         temiz_ad = "".join([c if c.isalnum() else "_" for c in str(ad)]).strip()
