@@ -336,6 +336,10 @@ class ETLWorker:
         print("="*60)
 
         dosyalar = glob.glob(os.path.join(ham_klasor, "*"))
+        st.write(f"📁 Klasörde {len(dosyalar)} dosya bulundu.")
+        if len(dosyalar) == 0:
+            st.error("Klasör boş, dosyalar yazılmamış!")
+            return None
         tum_veriler = []
 
         for dosya in dosyalar:
