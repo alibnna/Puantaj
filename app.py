@@ -672,12 +672,39 @@ class ExcelGenerator:
         # Config.GUN_ISIMLERI = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar']
         # Ama DataFrame'de temizlenmiş halleri var: ['PAZARTESI', 'SALI', 'CARSAMBA', ...]
         
-        pivot = df.pivot_table(index=['Hafta_Basi', 'Hafta_Sonu'], columns='Gün', values='Puan_Degeri', aggfunc='first')
+        pivot = df.pivot_table(index='Hafta_Basi', columns='Gün', values='Puan_Degeri', aggfunc='first')
         
-        # Temizlenmiş gün isimlerini kullan
-        temiz_gun_isimleri = [g.upper().replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U').replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C') for g in Config.GUN_ISIMLERI]
-        pivot = pivot.reindex(columns=temiz_gun_isimleri, fill_value="x").fillna("x").reset_index()
-
+        # 2. Tarih Aralığını Belirle (İlk ve Son Çalışma Haftası)
+        if not df.empty:
+            min_hb = df['Hafta_Basi'].min()
+            max_hb = df['Hafta_Basi'].max()
+            
+            # 3. Tüm haftaları kapsayan eksiksiz bir tarih dizisi oluştur (7 günde bir)
+            full_weeks = pd.date_range(start=min_hb, end=max_hb, freq='7D')
+            
+            # 4. Pivot tabloyu bu tam listeye göre zorla genişlet (Reindex)
+            # Verisi olmayan haftalar otomatik olarak NaN (boş) gelecek.
+            pivot = pivot.reindex(full_weeks)
+        
+        # 5. Gün sütunlarını (Pazartesi...Pazar) sırala ve boşlukları 'x' ile doldur
+        temiz_gun_isimleri = [
+            g.upper()
+            .replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U')
+            .replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C') 
+            for g in Config.GUN_ISIMLERI
+        ]
+        
+        # fill_value="x" -> Sütun yoksa x basar
+        # fillna("x") -> Satır (hafta) boşsa x basar
+        pivot = pivot.reindex(columns=temiz_gun_isimleri, fill_value="x").fillna("x")
+        
+        # 6. Index'i düzelt ve Hafta_Sonu sütununu tekrar hesapla
+        # (Reindex işlemi index ismini silebilir, geri atıyoruz)
+        pivot.index.name = 'Hafta_Basi'
+        pivot = pivot.reset_index()
+        
+        # Hafta sonunu matematiksel olarak tekrar oluşturuyoruz (Çünkü boş haftalarda bu veri yoktu)
+        pivot['Hafta_Sonu'] = pivot['Hafta_Basi'] + timedelta(days=6)
         def hesapla_haftalik(row):
             h_basi = row['Hafta_Basi']
             veri = df[df['Hafta_Basi'] == h_basi]
