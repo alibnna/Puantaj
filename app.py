@@ -1210,7 +1210,7 @@ def main():
         c1, c2 = st.columns(2)
         
         # Alacak Raporu İndir
-        alacak_dosya_adi = "KERIME_OGUT_HASSAS_ALACAK_RAPORU.xlsx"
+        alacak_dosya_adi = "HASSAS_ALACAK_RAPORU.xlsx"
         alacak_yolu = os.path.join(paths["RAPOR"], alacak_dosya_adi)
         if os.path.exists(alacak_yolu):
             with open(alacak_yolu, "rb") as f:
