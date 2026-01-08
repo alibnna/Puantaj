@@ -37,7 +37,7 @@ class Config:
     
     # Dosya isimleri (Notebook'taki ile birebir aynı)
     TEMIZ_VERI_DOSYASI = "Birlestirilmis_Temiz_Veri.xlsx"
-    ALACAK_RAPORU_DOSYASI = "KERIME_OGUT_HASSAS_ALACAK_RAPORU.xlsx"
+    ALACAK_RAPORU_DOSYASI = "HASSAS_ALACAK_RAPORU.xlsx"
 
     # İş Kanunu Sabitleri
     GUNLUK_STANDART_SAAT = 7.5
