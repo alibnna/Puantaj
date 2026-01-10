@@ -1088,6 +1088,9 @@ class ExcelGenerator:
         mevcut_kolonlar = [c for c in rename_map.keys() if c in b_export.columns]
         b_export = b_export[mevcut_kolonlar].rename(columns=rename_map)
         
+        # ✅ DÜZELTME: final_cols BURADA TANIMLANIYOR
+        final_cols = b_export.columns.tolist()
+
         b_export.to_excel(writer, sheet_name='Bordro', index=False)
         
         ws_b = writer.book['Bordro']
@@ -1096,7 +1099,8 @@ class ExcelGenerator:
             cell.fill = header_fill
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal='center')
-    
+        
+        # Formatlama döngüsü (Artık final_cols tanımlı olduğu için hata vermeyecek)
         para_format = '#,##0.00 "₺"'
         for row in ws_b.iter_rows(min_row=2, max_col=len(final_cols)):
             for cell in row:
@@ -1105,14 +1109,13 @@ class ExcelGenerator:
                         cell.number_format = '0.00'
                     else:
                         cell.number_format = para_format
-    
+
         ws_b.column_dimensions['A'].width = 15
         ws_b.column_dimensions['B'].width = 20
         ws_b.column_dimensions['M'].width = 25
-    
-        # ✅ DÜZELTME: Sadece bir kez close() çağrılıyor
+        
         writer.close()
-    
+        
         print(f"✅ Alacak raporu: {Config.ALACAK_RAPORU_DOSYASI}")
         print(f"💰 Toplam Alacak: {toplam_alacak:,.2f} TL")
         return ana
