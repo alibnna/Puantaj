@@ -1131,7 +1131,6 @@ class ExcelGenerator:
         # ==========================================
         
         writer.close() # Dosyayı kaydet
-        writer.close()
 
         print(f"✅ Alacak raporu: {Config.ALACAK_RAPORU_DOSYASI}")
         print(f"💰 Toplam Alacak: {toplam_alacak:,.2f} TL")
