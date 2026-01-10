@@ -485,15 +485,17 @@ class PayrollEngine:
 # ============================================================================
 class BordroReader:
     """
-    Geliştirilmiş Bordro Okuyucu - Detaylı Kalemler
+    ORİJİNAL NOTEBOOK'TAKİ (Cell 86) BORDRO OKUMA MANTIĞI
+    Regex, satır temizleme ve veri ayıklama mantığı birebir korunmuştur
     """
+
     @staticmethod
     def metni_sayiya_cevir(metin):
+        """Türk lirası formatını sayıya çevirir"""
         if not metin or metin == '0' or metin == '0,00':
             return 0.0
         try:
-            # TL, boşluk ve binlik ayracını temizle
-            temiz = str(metin).replace('TL', '').replace('₺', '').strip()
+            temiz = str(metin).replace('TL', '').strip()
             temiz = temiz.replace('.', '').replace(',', '.')
             return float(temiz)
         except:
@@ -501,155 +503,162 @@ class BordroReader:
 
     @staticmethod
     def pdf_oku(pdf_path):
+        """
+        ORİJİNAL NOTEBOOK MANTIĞI - Cell 86
+        PDF bordroyu okur, satır satır regex ile parse eder
+        """
         try:
             import pdfplumber
         except ImportError:
+            print("⚠️  pdfplumber kurulu değil. pip install pdfplumber")
             return BordroReader._manuel_veri()
 
-        print(f"\n📄 BORDRO OKUMA: {pdf_path}")
+        print("\n" + "="*60)
+        print("📄 BORDRO OKUMA (ORİJİNAL MANTIK)")
+        print("="*60)
+
         if not os.path.exists(pdf_path):
+            print(f"⚠️  PDF bulunamadı: {pdf_path}")
             return BordroReader._manuel_veri()
 
         veriler = []
-        
-        # Regex Tanımları
+        debug_log = []
+
+        # ORİJİNAL REGEX VE KESME KELİMELERİ
         PARA_REGEX = r'(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2}'
-        
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if not text:
-                    continue
-                
-                lines = text.split('\n')
-                
-                # Sayfa Bazlı Değişkenler
-                satir_veri = {
-                    'Donem_Kodu': None,
-                    'Aylik_Ucret_Brut': 0.0,
-                    'Gunluk_Ucret_Brut': 0.0,
-                    'FM_Ucreti': 0.0,
-                    'FM_Saati': 0.0,
-                    'HT_Ucreti': 0.0,
-                    'UBGT_Ucreti': 0.0,
-                    'Diger_Ek_Odeme': 0.0,
-                    'Sorumluluk_Ucreti': 0.0,
-                    'Ayni_Yardim': 0.0,
-                    'Yillik_Izin': 0.0,
-                    'AGI': 0.0,
-                    'Net_Odenen': 0.0,
-                    'Banka_Odemesi': 0.0,
-                    'Bordro_Saat_Ucreti': 0.0  # Hesaplama için kritik
-                }
+        KESME_KELIMELERI = [
+            "SSK", "ssk", "Matrah", "matrah", "İnd", "ind",
+            "Bes ", "bes ", "Gelir", "Damga", "Nafaka", "İcra"
+        ]
 
-                # --- 1. DÖNEM VE TEMEL MAAŞ BİLGİLERİ ---
-                for line in lines:
-                    line_lower = line.lower()
-                    
-                    # Dönem Bul (Ocak 2024 vb.)
-                    if not satir_veri['Donem_Kodu']:
-                        match = re.search(r'([a-zA-ZçÇğĞıİöÖşŞüÜ]+)\s+(20\d{2})', line)
-                        if match and match.group(1) in Config.AYLAR:
-                            ay_adi = match.group(1)
-                            yil = match.group(2)
-                            satir_veri['Donem_Kodu'] = f"{yil}-{Config.AYLAR[ay_adi]:02d}"
-
-                    # Net Ödenen Yakala (Genelde sayfanın altlarında "Ödenecek Net" yazar)
-                    if any(x in line_lower for x in ['ödenecek net', 'net ödenen', 'ele geçen']):
-                        nums = re.findall(PARA_REGEX, line)
-                        if nums:
-                            satir_veri['Net_Odenen'] = BordroReader.metni_sayiya_cevir(nums[-1])
-                            satir_veri['Banka_Odemesi'] = satir_veri['Net_Odenen'] # Genelde aynıdır
-
-                    # AGİ Yakala
-                    if 'agi' in line_lower or 'asgari geçim' in line_lower:
-                        nums = re.findall(PARA_REGEX, line)
-                        if nums:
-                            satir_veri['AGI'] = BordroReader.metni_sayiya_cevir(nums[0])
-
-                    # Brüt Maaş (Normal Kazanç)
-                    if 'normal kazanç' in line_lower or 'aylık ücret' in line_lower:
-                        nums = re.findall(PARA_REGEX, line)
-                        if nums:
-                            # Genelde büyük olan tutardır
-                            vals = [BordroReader.metni_sayiya_cevir(x) for x in nums]
-                            satir_veri['Aylik_Ucret_Brut'] = max(vals)
-
-                    # Saat Ücreti
-                    if "saat ücret" in line_lower:
-                         for p in line.split():
-                            val = BordroReader.metni_sayiya_cevir(p)
-                            if 1 < val < 2000:
-                                satir_veri['Bordro_Saat_Ucreti'] = val
-
-                # --- 2. MESAİ VE EK ÖDEME DETAYLARI ---
-                # Satır satır tekrar gezerek mesai kalemlerini topla
-                for line in lines:
-                    line_lower = line.lower()
-                    
-                    # Para Regex'i yoksa geç
-                    if not re.search(PARA_REGEX, line):
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                for sayfa_no, page in enumerate(pdf.pages, 1):
+                    text = page.extract_text()
+                    if not text:
                         continue
 
-                    raw_nums = re.findall(PARA_REGEX, line)
-                    vals = [BordroReader.metni_sayiya_cevir(x) for x in raw_nums]
-                    if not vals: continue
-                    
-                    val_tutar = max(vals)
-                    val_saat = vals[0] if len(vals) > 1 else 0
+                    lines = text.split('\n')
 
-                    # Fazla Mesai
-                    if any(x in line_lower for x in ["fazla mesai", "fm ", "f.mesai"]):
-                        satir_veri['FM_Ucreti'] += val_tutar
-                        # Eğer saat bilgisi de o satırda varsa (küçük olan sayı genelde saattir)
-                        if 0 < val_saat < 100 and val_saat != val_tutar:
-                            satir_veri['FM_Saati'] += val_saat
-                    
-                    # Hafta Tatili
-                    elif any(x in line_lower for x in ["hafta tatili", "pazar mesai"]):
-                        satir_veri['HT_Ucreti'] += val_tutar
-                    
-                    # UBGT
-                    elif "genel tatil" in line_lower or "resmi tatil" in line_lower:
-                        satir_veri['UBGT_Ucreti'] += val_tutar
-                    
-                    # Diğer Kalemler (Örnek Kelimeler)
-                    elif "sorumluluk" in line_lower:
-                        satir_veri['Sorumluluk_Ucreti'] += val_tutar
-                    elif "yakacak" in line_lower or "yol" in line_lower or "yemek" in line_lower:
-                        satir_veri['Ayni_Yardim'] += val_tutar
-                    elif "izin ücreti" in line_lower:
-                        satir_veri['Yillik_Izin'] += val_tutar
+                    donem = None
+                    saat_ucreti = 0.0
+                    odenen_fm_tutar = 0.0
+                    odenen_ubgt_tutar = 0.0
+                    odenen_ht_tutar = 0.0
 
-                # Brüt Aylıktan Günlük Brüt Hesapla (Bulunamadıysa)
-                if satir_veri['Aylik_Ucret_Brut'] > 0:
-                    satir_veri['Gunluk_Ucret_Brut'] = satir_veri['Aylik_Ucret_Brut'] / 30.0
-                
-                # Dönem bulunduysa listeye ekle
-                if satir_veri['Donem_Kodu']:
-                    # PDF okurken Odenen_FM_TL gibi eski değişken isimlerini de uyumlu tutmalıyız (Alacak raporu için)
-                    satir_veri['Odenen_FM_TL'] = satir_veri['FM_Ucreti']
-                    satir_veri['Odenen_UBGT_TL'] = satir_veri['UBGT_Ucreti']
-                    satir_veri['Odenen_HT_TL'] = satir_veri['HT_Ucreti']
-                    
-                    veriler.append(satir_veri)
+                    # DÖNEM VE SAAT ÜCRETİ BUL
+                    for line in lines:
+                        # Dönem tespiti (Ay + Yıl)
+                        if "201" in line or "202" in line:
+                            match = re.search(r'([a-zA-ZçÇğĞıİöÖşŞüÜ]+)\s+(20\d{2})', line)
+                            if match and match.group(1) in Config.AYLAR:
+                                ay_adi = match.group(1)
+                                yil = match.group(2)
+                                donem = f"{yil}-{Config.AYLAR[ay_adi]:02d}"
+
+                        # Saat ücreti tespiti
+                        if "Saat Ücret" in line:
+                            for p in line.split():
+                                val = BordroReader.metni_sayiya_cevir(p)
+                                if 0 < val < 2000:  # Makul saat ücreti aralığı
+                                    saat_ucreti = val
+                                    break
+
+                    # SATIR BAZLI ANALİZ (ORİJİNAL MANTIK)
+                    for line in lines:
+                        line_lower = line.lower()
+
+                        # Regex ile para tutarı yoksa atla
+                        if not re.search(r'\d+[,\.]\d{2}', line):
+                            continue
+
+                        # KESME KELİMELERİNDEN ÖNCE KES
+                        temiz_satir = line
+                        for kelime in KESME_KELIMELERI:
+                            if kelime in temiz_satir:
+                                temiz_satir = temiz_satir.split(kelime)[0]
+
+                        # PARA TUTARLARINI BUL
+                        raw_nums = re.findall(PARA_REGEX, temiz_satir)
+                        if not raw_nums:
+                            continue
+
+                        float_vals = [BordroReader.metni_sayiya_cevir(x) for x in raw_nums]
+                        valid_vals = [x for x in float_vals if 0 < x < 30000]
+
+                        if len(valid_vals) < 2:
+                            continue
+
+                        # En büyük değer tutar, ilk değer miktar
+                        val_tutar = max(valid_vals)
+                        val_miktar = valid_vals[0]
+                        if val_miktar == val_tutar and len(valid_vals) > 1:
+                            val_miktar = valid_vals[1]
+
+                        tip = None
+
+                        # KATEGORİZASYON (ORİJİNAL MANTIK)
+                        if any(x in line_lower for x in ["fazla mesai", "f.mesai", "fm "]):
+                            odenen_fm_tutar += val_tutar
+                            tip = "FM"
+                        elif "genel tatil me" in line_lower or "genel tatil çal" in line_lower:
+                            odenen_ubgt_tutar += val_tutar
+                            tip = "UBGT Mesaisi"
+                        elif any(x in line_lower for x in ["pazar mesai", "p.mesai", "p.mesaisi"]):
+                            odenen_ht_tutar += val_tutar
+                            tip = "Pazar Mesaisi"
+
+                        # DEBUG LOG (ORİJİNAL)
+                        if tip:
+                            debug_log.append({
+                                'Donem': donem,
+                                'Tip': tip,
+                                'Ham_Satir': line,
+                                'Tutar': val_tutar
+                            })
+
+                    # DÖNEM VERİSİNİ KAYDET
+                    if donem:
+                        veriler.append({
+                            'Donem_Kodu': donem,
+                            'Bordro_Saat_Ucreti': saat_ucreti,
+                            'Odenen_FM_TL': round(odenen_fm_tutar, 2),
+                            'Odenen_UBGT_TL': round(odenen_ubgt_tutar, 2),
+                            'Odenen_HT_TL': round(odenen_ht_tutar, 2)
+                        })
+
+        except Exception as e:
+            print(f"⚠️  PDF okuma hatası: {e}")
+            import traceback
+            traceback.print_exc()
+            return BordroReader._manuel_veri()
+
+        # DEBUG DOSYASI OLUŞTUR (ORİJİNAL)
+        if debug_log:
+            debug_df = pd.DataFrame(debug_log)
+            paths = Config.get_paths() # Kullanıcıya özel yolları anlık çekiyoruz
+            debug_path = os.path.join(paths["RAPOR"], "BORDRO_OKUMA_DEBUG.xlsx")
+            debug_df.to_excel(debug_path, index=False)
+            print(f"🔍 Debug: {debug_path}")
 
         if veriler:
-            df = pd.DataFrame(veriler)
-            # Mükerrer ayları temizle (En yüksek saat ücretini al - Zamlı olanı)
-            df = df.sort_values('Bordro_Saat_Ucreti', ascending=False).drop_duplicates('Donem_Kodu', keep='first')
-            return df
+            print(f"✅ {len(veriler)} dönem bordro verisi okundu")
+            return pd.DataFrame(veriler)
         else:
+            print("⚠️  Bordro verisi okunamadı, manuel veri kullanılıyor")
             return BordroReader._manuel_veri()
-    
+
     @staticmethod
     def _manuel_veri():
-        # Hata durumunda boş df
-        cols = ['Donem_Kodu','Aylik_Ucret_Brut','Gunluk_Ucret_Brut','FM_Ucreti','FM_Saati',
-                'HT_Ucreti','UBGT_Ucreti','Diger_Ek_Odeme','Sorumluluk_Ucreti','Ayni_Yardim',
-                'Yillik_Izin','AGI','Net_Odenen','Banka_Odemesi', 'Bordro_Saat_Ucreti',
-                'Odenen_FM_TL', 'Odenen_UBGT_TL', 'Odenen_HT_TL']
-        return pd.DataFrame(columns=cols)
+        """Manuel bordro verisi"""
+        print("📝 Manuel bordro verisi (örnek)")
+        return pd.DataFrame([{
+            'Donem_Kodu': '2024-01',
+            'Bordro_Saat_Ucreti': 85.50,
+            'Odenen_FM_TL': 0.0,
+            'Odenen_UBGT_TL': 0.0,
+            'Odenen_HT_TL': 0.0
+        }])
 
 
 # ============================================================================
@@ -848,17 +857,15 @@ class ExcelGenerator:
         print("\n" + "="*60)
         print("💰 HASSAS ALACAK RAPORU")
         print("="*60)
-
-        # HATA BURADAYDI: Config.ALACAK_RAPORU_DOSYASI yerine 
-        # parametre olarak gelen cikti_klasoru'nu kullanmalıyız.
-        dosya_adi = "KERIME_OGUT_HASSAS_ALACAK_RAPORU.xlsx"
-        cikti_yolu = os.path.join(cikti_klasoru, dosya_adi) # <-- Dinamik yol kullanımı
+    
+        dosya_adi = "HASSAS_ALACAK_RAPORU.xlsx"
+        cikti_yolu = os.path.join(cikti_klasoru, dosya_adi)
         
         df = pd.read_excel(temiz_veri_yolu)
         df['Tarih'] = pd.to_datetime(df['Tarih'])
         df['Donem_Kodu'] = df['Tarih'].dt.strftime('%Y-%m')
         df['Hafta_Basi'] = df['Tarih'].apply(lambda x: x - timedelta(days=x.weekday()))
-
+    
         def analiz(row):
             tarih = row['Tarih'].date()
             pg = str(row.get('Pg.', '')).upper()
@@ -876,37 +883,37 @@ class ExcelGenerator:
                 durum = "UBGT"
             gece = PayrollEngine.gece_calismasi_mi(row['Giriş'], row['Çıkış'])
             return pd.Series([durum, puan, gece])
-
+    
         df[['Durum', 'Saat', 'Gece']] = df.apply(analiz, axis=1)
-
+    
         # FM'Yİ HAFTALIK HESAPLA, GÜNLÜK DAĞIT (ORİJİNAL MANTIK)
         df['FM_Saat_Hakedis'] = 0.0
-
+    
         for hb, grup in df.groupby('Hafta_Basi'):
             calisan = grup[grup['Saat'] > 0]
             if calisan.empty:
                 continue
-
+    
             toplam = calisan['Saat'].sum()
             dusulecek = 0
             for _, r in grup.iterrows():
                 if r['Saat'] > 0 and r['Durum'] in ['HT', 'UBGT', 'AREFE']:
                     dusulecek += min(r['Saat'], 7.5)
-
+    
             gece_fm = 0
             if calisan['Gece'].any():
                 for s in calisan['Saat']:
                     if s > 7.5:
                         gece_fm += (s - 7.5)
-
+    
             normal_fm = max(0, (toplam - dusulecek) - 45.0)
             haftalik_fm = max(gece_fm, normal_fm)
-
+    
             if haftalik_fm > 0:
                 calisan = calisan.copy()
                 calisan['Gunluk_Asim'] = calisan['Saat'].apply(lambda s: max(0, s - 7.5))
                 toplam_asim = calisan['Gunluk_Asim'].sum()
-
+    
                 if toplam_asim > 0:
                     for i, r in calisan.iterrows():
                         if r['Gunluk_Asim'] > 0:
@@ -917,14 +924,14 @@ class ExcelGenerator:
                     for i, r in calisan.iterrows():
                         pay = haftalik_fm * (r['Saat'] / toplam_saat)
                         df.at[i, 'FM_Saat_Hakedis'] = pay
-
+    
         # AYLIK ÖZET
         ozet = df.groupby('Donem_Kodu').agg({
             'FM_Saat_Hakedis': 'sum',
             'Durum': list,
             'Saat': list
         }).reset_index()
-
+    
         def detay_topla(row):
             u_gun, h_gun = 0, 0
             for d, s in zip(row['Durum'], row['Saat']):
@@ -936,50 +943,50 @@ class ExcelGenerator:
                     elif d == 'HT':
                         h_gun += 1
             return pd.Series([u_gun, h_gun])
-
+    
         ozet[['Hak_UBGT_Gun', 'Hak_HT_Gun']] = ozet.apply(detay_topla, axis=1)
         ozet.rename(columns={'FM_Saat_Hakedis': 'Hak_FM_Saat'}, inplace=True)
-
+    
         # BORDRO İLE BİRLEŞTİR
         ana = pd.merge(ozet, bordro_df, on='Donem_Kodu', how='left').fillna(0)
         ana = ana.sort_values('Donem_Kodu')
-
+    
         # DİNAMİK SAAT ÜCRETİ (ORİJİNAL MANTIK - Forward/Backward Fill)
         ana['Bordro_Saat_Ucreti'] = ana['Bordro_Saat_Ucreti'].replace(0, np.nan).ffill().bfill()
-
+    
         # HAK TUTARLARI HESAPLAMA
         ana['Hak_FM_Saat'] = ana['Hak_FM_Saat'].apply(
             lambda x: float(Decimal(str(x)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
         )
-
+    
         for col in ['Hak_FM_TL', 'Hak_UBGT_TL', 'Hak_HT_TL', 'Fark_FM_TL', 'Fark_UBGT_TL', 'Fark_HT_TL']:
             ana[col] = 0.0
-
-        # DEBUG MEKANIZMASI (ORİJİNAL)
+    
+        # DEBUG MEKANİZMASI (ORİJİNAL)
         hesap_debug_log = []
-
+    
         for idx, row in ana.iterrows():
             donem = row['Donem_Kodu']
             saat_ucreti = row['Bordro_Saat_Ucreti']
             gunluk_ucret = PayrollEngine.decimal_hesapla(saat_ucreti, 7.5)
-
+    
             # HAK TUTARLARI (DİNAMİK SAAT ÜCRETİ İLE)
             hak_fm_tl = PayrollEngine.decimal_hesapla(row['Hak_FM_Saat'], saat_ucreti, 1.5)
             hak_ubgt_tl = PayrollEngine.decimal_hesapla(row['Hak_UBGT_Gun'], gunluk_ucret)
             hak_ht_tl = PayrollEngine.decimal_hesapla(row['Hak_HT_Gun'], gunluk_ucret, 1.5)
-
+    
             # FARK HESAPLAMA
             fark_fm = max(0, PayrollEngine.decimal_hesapla(hak_fm_tl, row['Odenen_FM_TL'], islem="cikarma"))
             fark_ubgt = max(0, PayrollEngine.decimal_hesapla(hak_ubgt_tl, row['Odenen_UBGT_TL'], islem="cikarma"))
             fark_ht = max(0, PayrollEngine.decimal_hesapla(hak_ht_tl, row['Odenen_HT_TL'], islem="cikarma"))
-
+    
             ana.at[idx, 'Hak_FM_TL'] = hak_fm_tl
             ana.at[idx, 'Hak_UBGT_TL'] = hak_ubgt_tl
             ana.at[idx, 'Hak_HT_TL'] = hak_ht_tl
             ana.at[idx, 'Fark_FM_TL'] = fark_fm
             ana.at[idx, 'Fark_UBGT_TL'] = fark_ubgt
             ana.at[idx, 'Fark_HT_TL'] = fark_ht
-
+    
             # DEBUG LOG (ORİJİNAL)
             hesap_debug_log.append({
                 'Donem': donem,
@@ -997,28 +1004,25 @@ class ExcelGenerator:
                 'Odenen_HT': row['Odenen_HT_TL'],
                 'FARK_HT': fark_ht
             })
-
+    
         # DEBUG DOSYASI OLUŞTUR (ORİJİNAL)
         if hesap_debug_log:
             debug_df = pd.DataFrame(hesap_debug_log)
-            # HATALI: debug_path = os.path.join(Config.RAPOR_KLASORU, "HESAPLAMA_DETAY_DEBUG.xlsx")
-            # DOĞRU:
             debug_path = os.path.join(cikti_klasoru, "HESAPLAMA_DETAY_DEBUG.xlsx") 
             debug_df.to_excel(debug_path, index=False)
             print(f"🔍 Debug: {debug_path}")
-
+    
         # EXCEL YAZMA
-        cikti_yolu = os.path.join(cikti_klasoru, Config.ALACAK_RAPORU_DOSYASI) 
         writer = pd.ExcelWriter(cikti_yolu, engine='openpyxl')
-
+    
         sutunlar = {
             'Fazla Mesai': ['Donem_Kodu', 'Bordro_Saat_Ucreti', 'Hak_FM_Saat', 'Hak_FM_TL', 'Odenen_FM_TL', 'Fark_FM_TL'],
             'UBGT': ['Donem_Kodu', 'Bordro_Saat_Ucreti', 'Hak_UBGT_Gun', 'Hak_UBGT_TL', 'Odenen_UBGT_TL', 'Fark_UBGT_TL'],
             'Hafta Tatili': ['Donem_Kodu', 'Bordro_Saat_Ucreti', 'Hak_HT_Gun', 'Hak_HT_TL', 'Odenen_HT_TL', 'Fark_HT_TL']
         }
-
+    
         toplam_alacak = 0
-
+    
         def sheet_yap(isim, veri, renk):
             veri.to_excel(writer, sheet_name=isim, index=False, startrow=2)
             ws = writer.book[isim]
@@ -1039,31 +1043,30 @@ class ExcelGenerator:
                         cell.fill = PatternFill("solid", fgColor="FFE6E6")
                         cell.font = Font(bold=True, color=Config.RENK_KIRMIZI)
             return t
-
+    
         t1 = ana[sutunlar['Fazla Mesai']].copy()
         t1.columns = ['Dönem', 'Saat Ücreti', 'Hesaplanan (Saat)', 'Hesaplanan TL', 'Bordro Ödenen', 'FARK']
         t1 = t1[t1['FARK'] > 0]
         toplam_alacak += sheet_yap('FAZLA_MESAI', t1, Config.RENK_MAVI)
-
+    
         t2 = ana[sutunlar['UBGT']].copy()
         t2.columns = ['Dönem', 'Saat Ücreti', 'Hesaplanan (Gün)', 'Hesaplanan TL', 'Bordro Ödenen', 'FARK']
         t2 = t2[t2['FARK'] > 0]
         toplam_alacak += sheet_yap('UBGT', t2, Config.RENK_KOYU_KIRMIZI)
-
+    
         t3 = ana[sutunlar['Hafta Tatili']].copy()
         t3.columns = ['Dönem', 'Saat Ücreti', 'Hesaplanan (Gün)', 'Hesaplanan TL', 'Bordro Ödenen', 'FARK']
         t3 = t3[t3['FARK'] > 0]
         toplam_alacak += sheet_yap('HAFTA_TATILI', t3, Config.RENK_KOYU_MAVI)
-
+    
         ozet_df = pd.DataFrame([['GENEL TOPLAM ALACAK', toplam_alacak]], columns=['Kalem', 'Tutar'])
         ozet_df.to_excel(writer, sheet_name='OZET', index=False)
         writer.book['OZET']['B2'].number_format = '#,##0.00 TL'
         writer.book['OZET']['B2'].font = Font(bold=True, size=14, color=Config.RENK_KIRMIZI)
-
-        # 1. Bordro DF'sini formatla (Okunan verileri istediğin başlıklarla eşle)
+    
+        # Bordro DF'sini formatla
         b_export = bordro_df.copy()
         
-        # Eksik kolon varsa 0 ile doldur (Hata almamak için)
         expected_cols = ['Aylik_Ucret_Brut', 'Gunluk_Ucret_Brut', 'FM_Ucreti', 'FM_Saati', 
                          'HT_Ucreti', 'UBGT_Ucreti', 'Diger_Ek_Odeme', 'Sorumluluk_Ucreti', 
                          'Ayni_Yardim', 'Yillik_Izin', 'AGI', 'Net_Odenen', 'Banka_Odemesi']
@@ -1071,10 +1074,8 @@ class ExcelGenerator:
             if c not in b_export.columns:
                 b_export[c] = 0.0
     
-        # Sabit Kolon: Bordro İmza
         b_export['Bordro_Imza'] = "yok" 
     
-        # Kolon İsimlerini İstenilen Formata Çevir
         rename_map = {
             'Donem_Kodu': 'DÖNEM',
             'Aylik_Ucret_Brut': 'AYLIK ÜCRET (Brüt)',
@@ -1085,7 +1086,7 @@ class ExcelGenerator:
             'UBGT_Ucreti': ' UBGT Ücreti',
             'Diger_Ek_Odeme': 'Diğer Ek Ödeme ',
             'Sorumluluk_Ucreti': 'Sorumluluk Ücreti',
-            'Ayni_Yardim': 'AYNİ YARDIM',
+            'Ayni_Yardim': 'AYNI YARDIM',
             'Yillik_Izin': 'YILLIK İZİN ',
             'AGI': 'AGİ ',
             'Net_Odenen': 'Bordro  Ödenen NET  Ücret',
@@ -1094,48 +1095,37 @@ class ExcelGenerator:
         }
         
         b_export = b_export.rename(columns=rename_map)
-        
-        # Sadece İstenilen Kolonları Seç ve Sırala
         final_cols = list(rename_map.values())
         b_export = b_export[final_cols]
         
-        # Excel'e Yaz
         b_export.to_excel(writer, sheet_name='Bordro', index=False)
         
-        # Formatlama (TL simgesi ve Genişlik)
         ws_b = writer.book['Bordro']
-        
-        # Başlık Rengi (Gri)
         header_fill = PatternFill("solid", fgColor="D9D9D9")
         for cell in ws_b[1]:
             cell.fill = header_fill
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal='center')
     
-        # Para Formatı
         para_format = '#,##0.00 "₺"'
         for row in ws_b.iter_rows(min_row=2, max_col=len(final_cols)):
             for cell in row:
-                # Dönem ve İmza hariç hepsi para/sayı
                 if cell.col_idx not in [1, 15]: 
-                     # FM Saati (5. kolon) düz sayı olsun
                     if cell.col_idx == 5: 
                         cell.number_format = '0.00'
                     else:
                         cell.number_format = para_format
     
-        ws_b.column_dimensions['A'].width = 15  # Dönem
-        ws_b.column_dimensions['B'].width = 20  # Aylık Ücret
-        ws_b.column_dimensions['M'].width = 25  # Net Ücret
+        ws_b.column_dimensions['A'].width = 15
+        ws_b.column_dimensions['B'].width = 20
+        ws_b.column_dimensions['M'].width = 25
     
-        # ==========================================
-        
-        writer.close() # Dosyayı kaydet
-
+        # ✅ DÜZELTME: Sadece bir kez close() çağrılıyor
+        writer.close()
+    
         print(f"✅ Alacak raporu: {Config.ALACAK_RAPORU_DOSYASI}")
         print(f"💰 Toplam Alacak: {toplam_alacak:,.2f} TL")
         return ana
-
 
 # ============================================================================
 # 7. ORKESTRATÖר
