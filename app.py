@@ -1,9 +1,3 @@
-"""
-Profesyonel Puantaj ve Alacak Hesaplama Sistemi
-================================================
-Bordro okuma ve finansal hesaplama - ORİJİNAL NOTEBOOK MANTIĞI
-"""
-
 import pandas as pd
 import numpy as np
 import os
@@ -664,9 +658,10 @@ class BordroReader:
                                 if val_miktar > 0 and val_tutar > 0:
                                     current_gun_sayisi = val_miktar
                                     gunluk_ucret = val_tutar / val_miktar
-                                    current_brut_ucret = gunluk_ucret * 30
-                                    current_saat_ucreti = current_brut_ucret / 225
-                                    
+                                    ham_aylik = gunluk_ucret * 30
+                                    current_saat_ucreti = ham_aylik / 225
+                                    current_brut_ucret = round(ham_aylik, 2)
+
                                     if not (1 < current_saat_ucreti < 5000):
                                         current_brut_ucret = 0.0
                                         current_saat_ucreti = 0.0
@@ -678,7 +673,7 @@ class BordroReader:
                                 calculated = val_tutar / (val_miktar * 1.5)
                                 if 50 < calculated < 2000:
                                     current_saat_ucreti = calculated
-                                    current_brut_ucret = calculated * 225
+                                    ham_aylik = calculated * 225
                         
                         elif any(x in line_lower for x in ["genel tatil", "bayram mesai", "resmi tatil"]):
                             p_ubgt += val_tutar
@@ -1178,6 +1173,19 @@ class ExcelGenerator:
         final_cols = [col for col in rename_map.values() if col in b_export.columns]
         b_export = b_export[final_cols]
         
+        # ============================================================================
+        # SİGORTA: METİN FORMATINDA KALAN SAYILARI DÜZELTME
+        # ============================================================================
+        for col in b_export.columns:
+            # Tarih veya İsim sütunları hariç tutmak için basit kontrol
+            if "DÖNEM" not in col and "İmza" not in col:
+                try:
+                    # Sütunu zorla sayıya çevir (Hata verirse pas geç)
+                    b_export[col] = b_export[col].astype(float)
+                except:
+                    pass
+        # ============================================================================
+
         # Sütun isimleri yukarıdaki rename_map'ten geliyor
         bosaltilacak_sutunlar = [
             'Diğer Ek Ödeme ', 
@@ -1205,16 +1213,24 @@ class ExcelGenerator:
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal='center')
         
-        para_format = '#,##0.00 "₺"'
+        para_format = '"₺" #,##0.00'
+        parasal_kelimeler = ['ÜCRET', 'TUTAR', 'ÖDEME', 'YARDIM', 'AGİ', 'BRÜT', 'NET']
         for row in ws_b.iter_rows(min_row=2, max_col=len(final_cols)):
             for cell in row:
                 # Kolon indekslerine göre formatlama (Basit mantık: Tutar içerenler para formatı)
                 # Başlık ismini kontrol ederek format verelim
                 col_name = ws_b.cell(1, cell.col_idx).value
-                if col_name and any(x in col_name for x in ['Ücret', 'Tutar', 'Ödeme', 'YARDIM', 'AGİ']):
-                     cell.number_format = para_format
-                elif col_name and any(x in col_name for x in ['Saat', 'Gün']):
-                     cell.number_format = '0.00'
+                if col_name:
+                    # Başlığı ve aranan kelimeyi BÜYÜK HARFE çevirerek kontrol et (Case Insensitive)
+                    col_upper = str(col_name).upper()
+                    
+                    # 1. Parasal Kolonlar (TL Simgesi ve 2 Hane)
+                    if any(k.upper() in col_upper for k in parasal_kelimeler):
+                        cell.number_format = para_format
+                    
+                    # 2. Saat ve Gün Kolonları (Sadece 2 hane sayı, TL yok)
+                    elif any(x in col_upper for x in ['SAAT', 'GÜN']):
+                        cell.number_format = '0.00'
 
         ws_b.column_dimensions['A'].width = 15
         ws_b.column_dimensions['B'].width = 20
