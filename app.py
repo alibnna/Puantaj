@@ -1,3 +1,9 @@
+"""
+Profesyonel Puantaj ve Alacak Hesaplama Sistemi
+================================================
+Bordro okuma ve finansal hesaplama - ORİJİNAL NOTEBOOK MANTIĞI
+"""
+
 import pandas as pd
 import numpy as np
 import os
@@ -391,7 +397,7 @@ class PayrollEngine:
         else:
             # 11 saati aşan çalışmalarda Yargıtay kararları gereği 1.5 saat düşülür
             return 1.50
-            
+
     @staticmethod
     def saat_farki_hesapla_net(giris, cikis):
         if pd.isna(giris) or pd.isna(cikis) or str(giris).strip() == '' or str(cikis).strip() == '':
@@ -685,7 +691,7 @@ class BordroReader:
                                     current_saat_ucreti = calculated
                                     ham_aylik = calculated * 225
                         
-                        elif any(x in line_lower for x in ["genel tatil", "bayram mesai", "resmi tatil"]):
+                        elif any(x in line_lower for x in ["genel tatil m", "bayram mesai", "resmi tatil"]):
                             p_ubgt += val_tutar
                         elif any(x in line_lower for x in ["pazar mesai", "p.mesai"]):
                             p_ht += val_tutar
@@ -1054,6 +1060,15 @@ class ExcelGenerator:
             saat_ucreti = row['Bordro_Saat_Ucreti']
             gunluk_ucret = PayrollEngine.decimal_hesapla(saat_ucreti, 7.5)
             
+            # --- BURAYI EKLEYİN (DEBUG BAŞLANGIÇ) ---
+            if row['Hak_UBGT_Gun'] > 0:
+                print(f"\n--- UBGT KONTROL ({row['Donem_Kodu']}) ---")
+                print(f"Sistemdeki Hak Edilen Gün: {row['Hak_UBGT_Gun']}")
+                print(f"Kullanılan Saat Ücreti: {saat_ucreti}")
+                print(f"Hesaplanan Günlük Ücret: {gunluk_ucret}")
+                print(f"Bordroda Ödenen Tutar: {row['Odenen_UBGT_TL']}")
+            # --- BURAYI EKLEYİN (DEBUG BİTİŞ) ---
+            
             hak_fm_tl = PayrollEngine.decimal_hesapla(row['Hak_FM_Saat'], saat_ucreti, 1.5)
             hak_ubgt_tl = PayrollEngine.decimal_hesapla(row['Hak_UBGT_Gun'], gunluk_ucret)
             hak_ht_tl = PayrollEngine.decimal_hesapla(row['Hak_HT_Gun'], gunluk_ucret, 1.5)
@@ -1112,12 +1127,12 @@ class ExcelGenerator:
     
         t2 = ana[sutunlar['UBGT']].copy()
         t2.columns = ['Dönem', 'Saat Ücreti', 'Hesaplanan (Gün)', 'Hesaplanan TL', 'Bordro Ödenen', 'FARK']
-        t2 = t2[t2['FARK'] > 0]
+        t2 = t2[t2['Hesaplanan (Gün)'] > 0]
         toplam_alacak += sheet_yap('UBGT', t2, Config.RENK_KOYU_KIRMIZI)
     
         t3 = ana[sutunlar['Hafta Tatili']].copy()
         t3.columns = ['Dönem', 'Saat Ücreti', 'Hesaplanan (Gün)', 'Hesaplanan TL', 'Bordro Ödenen', 'FARK']
-        t3 = t3[t3['FARK'] > 0]
+        t3 = t3[t3['Hesaplanan (Gün)'] > 0]
         toplam_alacak += sheet_yap('HAFTA_TATILI', t3, Config.RENK_KOYU_MAVI)
     
         ozet_df = pd.DataFrame([['GENEL TOPLAM ALACAK', toplam_alacak]], columns=['Kalem', 'Tutar'])
