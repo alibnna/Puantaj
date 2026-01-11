@@ -1,9 +1,3 @@
-"""
-Profesyonel Puantaj ve Alacak Hesaplama Sistemi
-================================================
-Bordro okuma ve finansal hesaplama - ORİJİNAL NOTEBOOK MANTIĞI
-"""
-
 import pandas as pd
 import numpy as np
 import os
@@ -29,13 +23,11 @@ class Config:
     BORDRO_KLASORU = os.path.join(BASE_DIR, "Bordro")
     BORDRO_PDF = os.path.join(BORDRO_KLASORU, "islenen_bordro.pdf")
     
-    # Klasör isimlerini notebook ile aynı tutuyoruz
     HAM_VERI_KLASORU = os.path.join(BASE_DIR, "HamVeriler")
     TEMIZ_VERI_KLASORU = os.path.join(BASE_DIR, "PDKS")
     PUANTAJ_KLASORU = os.path.join(BASE_DIR, "Olusturulan_Puantajlar")
     RAPOR_KLASORU = os.path.join(BASE_DIR, "Final_Hesaplama")
     
-    # Dosya isimleri (Notebook'taki ile birebir aynı)
     TEMIZ_VERI_DOSYASI = "Birlestirilmis_Temiz_Veri.xlsx"
     ALACAK_RAPORU_DOSYASI = "HASSAS_ALACAK_RAPORU.xlsx"
 
@@ -44,6 +36,8 @@ class Config:
     HAFTALIK_YASAL_SURE = 45.0
     MINIMUM_SURE_GARANTISI = True
     HAFTA_TATILI_ISARETI = "x"
+
+    GECE_CALISMA_TOLERANS_DK = 0 # Varsayılan 0 (Kapalı)
 
     # Excel Renk Kodları
     RENK_SARI = "FFC000"
@@ -239,6 +233,52 @@ class ETLWorker:
         if val_str in ['nan', '', 'NaT', 'None']:
             return None
         return val_str[:5]
+    
+    @classmethod
+    def detect_header_row(cls, dosya_yolu, max_satir=30):
+        """
+        Dosyanın ilk N satırını okur, 'Tarih', 'Giriş', 'Çıkış' gibi 
+        anahtar kelimeleri arar ve başlık satırının indeksini döndürür.
+        """
+        try:
+            # Sadece ilk 30 satırı oku, başlık yokmuş gibi davran
+            if dosya_yolu.endswith('.xls'):
+                df_temp = pd.read_excel(dosya_yolu, header=None, nrows=max_satir, engine='xlrd')
+            else:
+                df_temp = pd.read_excel(dosya_yolu, header=None, nrows=max_satir, engine='openpyxl')
+            
+            # Aranacak anahtar kelimeler (Normalizasyon için hepsi büyük harf ve İngilizce karakter)
+            # Not: Kullanıcı verisinde GİRİŞ, GIRIS, GIRIŞ olabilir. Hepsini kapsamak için kökleri alıyoruz.
+            KEYWORDS = ['TARIH', 'GIRIS', 'CIKIS', 'ADI', 'SOYADI', 'SAAT', 'SURE', 'GUN', 'SICIL', 'NORMAL']
+            
+            max_skor = 0
+            en_iyi_satir = 0
+            
+            for index, row in df_temp.iterrows():
+                # Satırdaki tüm hücreleri stringe çevir, büyüt ve temizle
+                satir_metni = " ".join([str(x).upper() for x in row if pd.notna(x)])
+                
+                # Karakter temizliği (Basit versiyon)
+                satir_metni = satir_metni.replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U').replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C')
+                
+                # Skorlama: Kaç tane anahtar kelime bu satırda var?
+                skor = sum(1 for k in KEYWORDS if k in satir_metni)
+                
+                if skor > max_skor:
+                    max_skor = skor
+                    en_iyi_satir = index
+            
+            # Eğer hiç anlamlı başlık bulamazsa varsayılan olarak 0 döndür veya hata fırlat
+            if max_skor < 2: # En az 2 kelime tutmalı (Örn: Tarih ve Giriş)
+                print(f"⚠️ Uyarı: '{os.path.basename(dosya_yolu)}' dosyasında net bir başlık bulunamadı. Varsayılan (0) kullanılıyor.")
+                return 0
+                
+            print(f"✅ Başlık Tespiti: '{os.path.basename(dosya_yolu)}' için başlık satırı {en_iyi_satir}. satırda bulundu (Skor: {max_skor}).")
+            return en_iyi_satir
+
+        except Exception as e:
+            print(f"❌ Başlık tespit hatası: {e}")
+            return 0 # Hata durumunda en üstten başla
 
     @classmethod
     def satir_bazli_veri_al(cls, row, giris_cols, cikis_cols, ng_col, nc_col):
@@ -265,11 +305,14 @@ class ETLWorker:
     @classmethod
     def dosya_temizle(cls, dosya_yolu):
         try:
-            # .xls dosyaları için xlrd, .xlsx için openpyxl kullanılır
+            # ADIM 1: Akıllı Başlık Tespiti
+            header_index = cls.detect_header_row(dosya_yolu)
+            
+            # ADIM 2: Tespit edilen satırdan okumaya başla
             if dosya_yolu.endswith('.xls'):
-                df = pd.read_excel(dosya_yolu, skiprows=7, engine='xlrd')
+                df = pd.read_excel(dosya_yolu, header=header_index, engine='xlrd')
             else:
-                df = pd.read_excel(dosya_yolu, skiprows=7)
+                df = pd.read_excel(dosya_yolu, header=header_index)
 
             # SÜTUN NORMALİZASYONU (Loglardaki bozuk karakterleri düzeltiyoruz)
             def sutun_duzelt(s):
@@ -448,8 +491,11 @@ class PayrollEngine:
             overlap = (earliest_end - latest_start).total_seconds()
             overlap = max(0.0, overlap) # Negatif çıkarsa 0 yap
 
+            # Toleransı saniyeye çevir ve düş
+            tolerans_saniye = Config.GECE_CALISMA_TOLERANS_DK * 60
+            efektif_gece_suresi = max(0.0, overlap - tolerans_saniye)
             # 4. KARAR ANI: Gece süresi, toplam sürenin yarısından fazla mı?
-            return overlap > (total_seconds / 2)
+            return efektif_gece_suresi > (total_seconds / 2)
 
         except Exception as e:
             # Beklenmedik bir hata olursa güvenli tarafta kalıp False dönelim
@@ -624,8 +670,6 @@ class BordroReader:
                                         current_saat_ucreti = 0.0
                                     else:
                                         print(f"  ✓ {current_donem} | Gün: {current_gun_sayisi} | Tutar: {val_tutar} | Saatlik: {current_saat_ucreti:.2f}")
-
-                        # ... (Kodun geri kalanı aynı: B. ÖDEME KALEMLERİ vs.) ...
                         
                         # 1. FM (Fazla Mesai)
                         elif any(x in line_lower for x in ["fazla mesai", "f.mesai", "fm ", "f. mesai"]):
@@ -726,10 +770,7 @@ class BordroReader:
 class ExcelGenerator:
     @staticmethod
     def gorsel_puantaj_olustur(temiz_veri_yolu, cikti_klasoru):
-        """
-        DÖNÜŞ DEĞERİ DEĞİŞTİ: (dosya_yolu, islenmis_dataframe)
-        Artık hesaplanan veriyi dışarı fırlatıyor ki Alacak Raporu da aynısını kullansın.
-        """
+
         print("\n" + "="*60)
         print("📊 GÖRSEL PUANTAJ (VERİ ÜRETİCİ)")
         print("="*60)
@@ -783,7 +824,6 @@ class ExcelGenerator:
         df[['Durum', 'Puan_Degeri', 'Final_Hesap', 'Gece_Mi']] = df.apply(analiz_et, axis=1)
 
         # --- EXCEL GÖRSELLEŞTİRME (PIVOT) ---
-        # (Bu kısım aynı kalıyor, görsel tabloyu oluşturur)
         pivot = df.pivot_table(index='Hafta_Basi', columns='Gün', values='Puan_Degeri', aggfunc='first')
         
         if not df.empty:
@@ -853,7 +893,7 @@ class ExcelGenerator:
         pivot[final_cols].to_excel(writer, sheet_name='Puantaj', startrow=3, index=False, header=False)
         ws = writer.book['Puantaj']
         
-        # --- Stil İşlemleri (Aynı Kaldı) ---
+        # --- Stil İşlemleri ---
         sari = PatternFill("solid", fgColor=Config.RENK_SARI)
         gri = PatternFill("solid", fgColor=Config.RENK_GRI)
         yesil = PatternFill("solid", fgColor=Config.RENK_YESIL)
@@ -1146,7 +1186,7 @@ class ExcelGenerator:
                 # 0 değerlerini NaN (boş) yapıyoruz. 
                 # (Excel'de hücre boş görünür)
                 b_export[col] = b_export[col].replace({0: np.nan, 0.0: np.nan})
-                
+
         # Excel'e Yaz
         b_export.to_excel(writer, sheet_name='Bordro', index=False)
         
@@ -1228,6 +1268,46 @@ def main():
             type=['pdf'], 
             key=f"pdf_up_{st.session_state.reset_counter}"
         )
+
+    st.divider() # Görsel ayırıcı çizgi
+
+    # --- AYARLAR PANELİ ---
+    with st.sidebar.expander("⚙️ Hesaplama Parametreleri", expanded=False):
+        st.caption("Varsayılan yasal değerleri buradan değiştirebilirsiniz.")
+        
+        # 1. Çalışma Süreleri
+        yeni_haftalik_sure = st.number_input(
+            "Haftalık Yasal Süre (Saat)", 
+            min_value=1.0, 
+            max_value=60.0, 
+            value=45.0, 
+            step=0.5,
+            help="İş Kanunu'na göre genelde 45 saattir."
+        )
+        
+        yeni_gunluk_sure = st.number_input(
+            "Günlük Standart (Saat)", 
+            min_value=1.0, 
+            max_value=24.0, 
+            value=7.5, 
+            step=0.5,
+            help="Denkleştirme için baz alınan günlük süre."
+        )
+        
+        # 2. Mantıksal Ayarlar
+        yeni_min_garanti = st.checkbox(
+            "Min. Süre Garantisi (7.5 Sa)", 
+            value=True,
+            help="İşçi işe gelmişse, az çalışsa bile 7.5 saat çalışmış sayılsın mı?"
+        )
+        # 3. Gece Çalışma Toleransı
+        tolerans_dk = st.number_input(
+            "Gece Geçiş Toleransı (Dakika)",
+            min_value=0,
+            max_value=300,
+            value=0,
+            help="Gece çalışması hesaplanırken, geceye denk gelen süreden düşülecek tolerans payı. (Örn: Geç kart basmaları yoksaymak için)"
+        )
         
         # ♻️ TÜM VERİLERİ SIFIRLA BUTONU
         if st.sidebar.button("♻️ Tüm Verileri ve UI'ı Sıfırla"):
@@ -1248,6 +1328,15 @@ def main():
     # HESAPLAMA AKIŞI
     # HESAPLAMA AKIŞI BÖLÜMÜNÜ ŞÖYLE GÜNCELLEYİN:
     if st.button("🚀 Hesaplamayı Başlat"):
+
+        # --- CONFIG ENJEKSİYONU BAŞLANGICI ---
+        Config.HAFTALIK_YASAL_SURE = yeni_haftalik_sure
+        Config.GUNLUK_STANDART_SAAT = yeni_gunluk_sure
+        Config.MINIMUM_SURE_GARANTISI = yeni_min_garanti
+        Config.GECE_CALISMA_TOLERANS_DK = tolerans_dk
+
+        st.toast(f"⚙️ Ayarlar uygulandı: Haftalık {Config.HAFTALIK_YASAL_SURE} saat baz alınacak.", icon="✅")
+        # --- CONFIG ENJEKSİYONU BİTİŞİ ---
         if not excel_files or not pdf_file:
             st.warning("Lütfen dosyaları yükleyin.")
             return
@@ -1273,7 +1362,8 @@ def main():
                     st.write("📊 Görsel puantaj oluşturuluyor ve veri hesaplanıyor...")
                     # DİKKAT: Artık iki değer dönüyor (yol ve dataframe)
                     puantaj_yolu, processed_df = ExcelGenerator.gorsel_puantaj_olustur(temiz_yol, paths["PUANTAJ"])
-                    
+                    # icon parametresine doğrudan emoji yapıştırıyoruz
+                    st.toast(f"📊 Puantaj hesaplandı. Bordro analizi başlıyor.", icon="📄")
                     st.write("📄 Bordro analiz ediliyor...")
                     bordro_df = BordroReader.pdf_oku(paths["BORDRO_FILE"])
                     
