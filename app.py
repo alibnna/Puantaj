@@ -375,13 +375,23 @@ class PayrollEngine:
 
     @staticmethod
     def mola_suresi_hesapla(brut_calisma_saati):
+        """
+        İş Kanunu Md. 68 ve Yargıtay 9. H.D. İçtihatlarına göre mola hesabı.
+        - 4 saate kadar: 15 dk
+        - 4-7.5 saat arası: 30 dk
+        - 7.5-11 saat arası: 1 saat
+        - 11 saatten fazla: 1.5 saat (Yargıtay Standardı)
+        """
         if brut_calisma_saati <= 4:
             return 0.25
         elif brut_calisma_saati <= 7.5:
             return 0.50
-        else:
+        elif brut_calisma_saati <= 11:
             return 1.00
-
+        else:
+            # 11 saati aşan çalışmalarda Yargıtay kararları gereği 1.5 saat düşülür
+            return 1.50
+            
     @staticmethod
     def saat_farki_hesapla_net(giris, cikis):
         if pd.isna(giris) or pd.isna(cikis) or str(giris).strip() == '' or str(cikis).strip() == '':
