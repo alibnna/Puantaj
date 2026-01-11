@@ -215,194 +215,164 @@ class StaticHolidays:
 # 3. ETL İŞÇİSİ
 # ============================================================================
 class ETLWorker:
-    """Ham verileri okur, temizler"""
+    """Ham verileri okur, bozuk karakterleri (İsim, Gün, PG) ve saatleri temizler"""
 
+    # Gelişmiş Karakter Haritası
     KARAKTER_HARITASI = {
         'Ã„°': 'İ', 'Ã': 'Ğ', 'Ãž': 'Ş', 'Ã¾': 'ş', 'Ã½': 'ı', 'Ã°': 'ğ',
-        'Ã': 'İ', 'Ö': 'Ö', 'ö': 'ö', 'Ü': 'Ü', 'ü': 'ü', 'Ç': 'Ç', 'ç': 'ç',
         'Ý': 'İ', 'Ð': 'Ğ', 'Þ': 'Ş', 'þ': 'ş', 'ý': 'ı', 'ð': 'ğ',
         'Ä°': 'İ', 'Äž': 'Ğ', 'Åž': 'Ş', 'ÅŸ': 'ş', 'Ä±': 'ı', 'ÄŸ': 'ğ',
-        'Ã‡': 'Ç', 'Ã§': 'ç', 'Ã–': 'Ö', 'Ã¶': 'ö', 'Ãœ': 'Ü', 'Ã¼': 'ü'
+        'Ã‡': 'Ç', 'Ã§': 'ç', 'Ã–': 'Ö', 'Ã¶': 'ö', 'Ãœ': 'Ü', 'Ã¼': 'ü',
+        'Ý': 'İ', 'Þ': 'Ş', 'Ð': 'Ğ', # Ekstra garantiler
+        'GÜNDÜZ': 'GÜNDÜZ' # Bazen GÜNDÜZ kelimesi bozulmaz ama referans olsun
     }
 
     @classmethod
     def turkce_karakter_duzelt(cls, text):
+        """Metindeki bozuk karakterleri düzeltir"""
         if not isinstance(text, str):
             return text
+        
+        # Önce haritadaki bilinen bozuklukları düzelt
         for bozuk, duzgun in cls.KARAKTER_HARITASI.items():
             text = text.replace(bozuk, duzgun)
+            
+        # Ekstra temizlik: Bazen tek kalan bozuk harfler olabilir
         return text.strip()
 
     @classmethod
-    def saat_temizle(cls, val):
+    def saat_formatla(cls, val):
+        """Veriyi 08:00 formatında temiz stringe çevirir"""
         val_str = str(val).strip()
-        if val_str in ['nan', '', 'NaT', 'None']:
+        if val_str.lower() in ['nan', '', 'nat', 'none', '0']:
             return None
-        return val_str[:5]
-    
+        try:
+            if isinstance(val, (datetime, pd.Timestamp)):
+                return val.strftime('%H:%M')
+            if len(val_str) > 5:
+                return val_str[:5]
+            return val_str
+        except:
+            return None
+
     @classmethod
     def detect_header_row(cls, dosya_yolu, max_satir=30):
-        """
-        Dosyanın ilk N satırını okur, 'Tarih', 'Giriş', 'Çıkış' gibi 
-        anahtar kelimeleri arar ve başlık satırının indeksini döndürür.
-        """
+        """Akıllı Başlık Tespiti"""
         try:
-            # Sadece ilk 30 satırı oku, başlık yokmuş gibi davran
             if dosya_yolu.endswith('.xls'):
                 df_temp = pd.read_excel(dosya_yolu, header=None, nrows=max_satir, engine='xlrd')
             else:
                 df_temp = pd.read_excel(dosya_yolu, header=None, nrows=max_satir, engine='openpyxl')
             
-            # Aranacak anahtar kelimeler (Normalizasyon için hepsi büyük harf ve İngilizce karakter)
-            # Not: Kullanıcı verisinde GİRİŞ, GIRIS, GIRIŞ olabilir. Hepsini kapsamak için kökleri alıyoruz.
             KEYWORDS = ['TARIH', 'GIRIS', 'CIKIS', 'ADI', 'SOYADI', 'SAAT', 'SURE', 'GUN', 'SICIL', 'NORMAL']
-            
             max_skor = 0
             en_iyi_satir = 0
             
             for index, row in df_temp.iterrows():
-                # Satırdaki tüm hücreleri stringe çevir, büyüt ve temizle
                 satir_metni = " ".join([str(x).upper() for x in row if pd.notna(x)])
-                
-                # Karakter temizliği (Basit versiyon)
+                # Başlık tespiti için de karakter düzeltme yapıyoruz
                 satir_metni = satir_metni.replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U').replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C')
-                
-                # Skorlama: Kaç tane anahtar kelime bu satırda var?
                 skor = sum(1 for k in KEYWORDS if k in satir_metni)
-                
                 if skor > max_skor:
                     max_skor = skor
                     en_iyi_satir = index
             
-            # Eğer hiç anlamlı başlık bulamazsa varsayılan olarak 0 döndür veya hata fırlat
-            if max_skor < 2: # En az 2 kelime tutmalı (Örn: Tarih ve Giriş)
-                print(f"⚠️ Uyarı: '{os.path.basename(dosya_yolu)}' dosyasında net bir başlık bulunamadı. Varsayılan (0) kullanılıyor.")
-                return 0
-                
-            print(f"✅ Başlık Tespiti: '{os.path.basename(dosya_yolu)}' için başlık satırı {en_iyi_satir}. satırda bulundu (Skor: {max_skor}).")
-            return en_iyi_satir
-
-        except Exception as e:
-            print(f"❌ Başlık tespit hatası: {e}")
-            return 0 # Hata durumunda en üstten başla
-
-    @classmethod
-    def satir_bazli_veri_al(cls, row, giris_cols, cikis_cols, ng_col, nc_col):
-        en_erken_giris = None
-        olasi_girisler = [cls.saat_temizle(row[c]) for c in giris_cols if cls.saat_temizle(row[c])]
-        if olasi_girisler:
-            en_erken_giris = min(olasi_girisler)
-
-        en_gec_cikis = None
-        olasi_cikislar = [cls.saat_temizle(row[c]) for c in cikis_cols if cls.saat_temizle(row[c])]
-        if olasi_cikislar:
-            en_gec_cikis = olasi_cikislar[-1]
-
-        ng_val = cls.saat_temizle(row[ng_col]) if ng_col else None
-        nc_val = cls.saat_temizle(row[nc_col]) if nc_col else None
-
-        if not en_erken_giris and ng_val:
-            en_erken_giris = ng_val
-        if not en_gec_cikis and nc_val:
-            en_gec_cikis = nc_val
-
-        return pd.Series([en_erken_giris, en_gec_cikis, ng_val, nc_val])
+            return en_iyi_satir if max_skor >= 2 else 0
+        except:
+            return 0
 
     @classmethod
     def dosya_temizle(cls, dosya_yolu):
         try:
-            # ADIM 1: Akıllı Başlık Tespiti
             header_index = cls.detect_header_row(dosya_yolu)
             
-            # ADIM 2: Tespit edilen satırdan okumaya başla
             if dosya_yolu.endswith('.xls'):
                 df = pd.read_excel(dosya_yolu, header=header_index, engine='xlrd')
             else:
                 df = pd.read_excel(dosya_yolu, header=header_index)
 
-            # SÜTUN NORMALİZASYONU (Loglardaki bozuk karakterleri düzeltiyoruz)
+            # --- SÜTUN İSİMLERİNİ DÜZELT ---
             def sutun_duzelt(s):
                 s = str(s).strip().upper()
-                # Loglarda görülen en inatçı bozuk karakterleri doğrudan hedef alıyoruz
-                s = s.replace('CÝKÝÞ', 'CIKIS')
-                s = s.replace('GIRIÞ', 'GIRIS')
+                s = s.replace('CÝKÝÞ', 'CIKIS').replace('GIRIÞ', 'GIRIS')
                 s = s.replace('Ý', 'I').replace('Þ', 'S').replace('Ð', 'G')
-                # Standart Türkçe karakter temizliği
                 s = s.replace('İ', 'I').replace('Ğ', 'G').replace('Ü', 'U')
                 s = s.replace('Ş', 'S').replace('Ö', 'O').replace('Ç', 'C')
                 return s
 
             df.columns = [sutun_duzelt(col) for col in df.columns]
 
-            # ESNEK SÜTUN YAKALAMA
             giris_cols = [c for c in df.columns if 'GIRIS' in c]
             cikis_cols = [c for c in df.columns if 'CIKIS' in c]
             tarih_cols = [c for c in df.columns if 'TARIH' in c]
             ad_cols = [c for c in df.columns if 'ADI' in c or 'SOYADI' in c]
-            ng_cols = [c for c in df.columns if 'N.G' in c or 'NG' in c]
-            nc_cols = [c for c in df.columns if 'N.C' in c or 'NC' in c]
+            gun_cols = [c for c in df.columns if c == 'GUN']
+            pg_cols = [c for c in df.columns if 'PG' in c]
 
             if not giris_cols or not cikis_cols:
-                st.warning(f"Sütunlar eşleşmedi! Mevcut: {list(df.columns)}")
                 return None
 
-            # Veri tiplerini temizle ve dönüştür
             tarih_col = tarih_cols[0]
             df = df.dropna(subset=[tarih_col])
             df['Temp_Date'] = pd.to_datetime(df[tarih_col], dayfirst=True, errors='coerce')
             df = df.dropna(subset=['Temp_Date'])
 
-            # Final DataFrame Oluşturma
+            # Final DataFrame
             clean_df = pd.DataFrame()
-            clean_df['Adı Soyadı'] = df[ad_cols[0]] if ad_cols else "Bilinmeyen"
+            
+            # 1. AD SOYADI (Düzeltmeli)
+            if ad_cols:
+                clean_df['Adı Soyadı'] = df[ad_cols[0]].apply(cls.turkce_karakter_duzelt)
+            else:
+                clean_df['Adı Soyadı'] = "Personel"
+            
             clean_df['Tarih'] = df['Temp_Date']
-            clean_df['Gün'] = df['GUN'] if 'GUN' in df.columns else ""
-            clean_df['Pg.'] = df['PG.'] if 'PG.' in df.columns else ""
-            clean_df['N.G.'] = df[ng_cols[0]] if ng_cols else None
-            clean_df['N.Ç.'] = df[nc_cols[0]] if nc_cols else None
-            clean_df['Giriş'] = df[giris_cols[0]]
-            clean_df['Çıkış'] = df[cikis_cols[0]]
+            
+            # 2. GÜN (Düzeltmeli - Çarþamba -> Çarşamba)
+            if gun_cols:
+                clean_df['Gün'] = df[gun_cols[0]].apply(cls.turkce_karakter_duzelt)
+            else:
+                clean_df['Gün'] = ""
+                
+            # 3. PG / VARDİYA (Düzeltmeli)
+            if pg_cols:
+                clean_df['Pg.'] = df[pg_cols[0]].apply(cls.turkce_karakter_duzelt)
+            else:
+                clean_df['Pg.'] = ""
+            
+            # 4. Saatler (Formatlı)
+            clean_df['Giriş'] = df[giris_cols[0]].apply(cls.saat_formatla)
+            clean_df['Çıkış'] = df[cikis_cols[0]].apply(cls.saat_formatla)
 
-            # Boş olmayanları al
-            clean_df = clean_df[(clean_df['Giriş'].notna()) | (clean_df['N.G.'].notna())]
+            clean_df = clean_df[(clean_df['Giriş'].notna()) | (clean_df['Çıkış'].notna())]
+            clean_df = clean_df.sort_values(by=['Tarih', 'Adı Soyadı'])
+            
             return clean_df
 
         except Exception as e:
-            st.error(f"⚠️ Dosya işleme hatası ({os.path.basename(dosya_yolu)}): {e}")
+            st.error(f"Dosya işleme hatası ({os.path.basename(dosya_yolu)}): {e}")
             return None
-
+    
+    # calistir_etl metodu aynı kalıyor, yukarıdaki sınıfın içinde zaten mevcut.
     @classmethod
     def calistir_etl(cls, ham_klasor, hedef_klasor, hedef_dosya):
-        st.write("🔍 ETL Süreci Başladı...")
         dosyalar = glob.glob(os.path.join(ham_klasor, "*"))
-        
-        # LOG A: Dosya sayısı kontrolü
-        st.write(f"📂 Ham veri klasöründeki toplam dosya sayısı: {len(dosyalar)}")
-        
         tum_veriler = []
 
         for dosya in dosyalar:
-            if dosya.lower().endswith(('.xls', '.xlsx', '.csv')):
-                st.write(f"📖 Okunan dosya: {os.path.basename(dosya)}")
+            if dosya.lower().endswith(('.xls', '.xlsx', '.csv')) and not os.path.basename(dosya).startswith('~$'):
                 df = cls.dosya_temizle(dosya)
-                
                 if df is not None and len(df) > 0:
                     tum_veriler.append(df)
-                    st.write(f"✅ {os.path.basename(dosya)} içinden {len(df)} satır alındı.")
-                else:
-                    # LOG B: Dosya neden boş döndü?
-                    st.warning(f"⚠️ {os.path.basename(dosya)} işlenemedi veya boş. Formatı kontrol edin.")
 
         if tum_veriler:
-            ana_df = pd.concat(tum_veriler, ignore_index=True).sort_values(by='Tarih')
+            ana_df = pd.concat(tum_veriler, ignore_index=True)
+            ana_df = ana_df.sort_values(by=['Tarih', 'Adı Soyadı'])
             cikti_yolu = os.path.join(hedef_klasor, hedef_dosya)
             ana_df.to_excel(cikti_yolu, index=False)
             return cikti_yolu
         else:
-            # LOG C: Neden başarısız oldu?
-            st.error("❌ Hiçbir dosyadan geçerli veri çekilemedi! (Sütun isimleri veya 'skiprows' hatalı olabilir)")
             return None
-            
 # ============================================================================
 # 4. BORDRO MOTORU
 # ============================================================================
@@ -533,7 +503,7 @@ class PayrollEngine:
 
 
 # ============================================================================
-# 5. BORDRO OKUYUCU (VERİ KARIŞIKLIĞINI GİDEREN VERSİYON)
+# 5. BORDRO OKUYUCU (GÜNCELLENMİŞ - İSİM FİLTRELİ)
 # ============================================================================
 class BordroReader:
 
@@ -549,7 +519,37 @@ class BordroReader:
             return 0.0
 
     @staticmethod
-    def pdf_oku(pdf_path):
+    def normalize_str(text):
+        """
+        Karşılaştırma için metni 'süper' temizler.
+        1. Büyük harfe çevirir.
+        2. Türkçe karakterleri İngilizce karşılıklarına dönüştürür.
+        3. Harf ve Rakam DIŞINDAKİ her şeyi (boşluk, _, -, . vb.) siler.
+        
+        Örnek: "ECEVİT_ŞENGÜN" -> "ECEVITSENGUN"
+               "Ecevit ŞENGÜN" -> "ECEVITSENGUN"
+        Sonuç: Eşleşme Başarılı ✅
+        """
+        if not text: return ""
+        
+        # 1. Stringe çevir ve büyüt
+        text = str(text).upper()
+        
+        # 2. Türkçe karakter dönüşüm haritası
+        tr_map = {'İ': 'I', 'Ğ': 'G', 'Ü': 'U', 'Ş': 'S', 'Ö': 'O', 'Ç': 'C'}
+        for tr, en in tr_map.items():
+            text = text.replace(tr, en)
+            
+        # 3. Agresif Temizlik: Sadece A-Z ve 0-9 kalsın. 
+        # (Boşluk, alt çizgi, nokta, virgül hepsi silinir)
+        import re
+        text = re.sub(r'[^A-Z0-9]', '', text)
+        
+        return text
+
+    @staticmethod
+    # BURAYA DİKKAT: Yeni parametre 'hedef_isim' eklendi varsayılan None
+    def pdf_oku(pdf_path, hedef_isim=None):
         try:
             import pdfplumber
         except ImportError:
@@ -557,7 +557,7 @@ class BordroReader:
             return BordroReader._manuel_veri()
 
         print("\n" + "="*60)
-        print("📄 BORDRO OKUMA (SAYFA BAZLI AYRIŞTIRMA)")
+        print(f"📄 BORDRO OKUMA BAŞLIYOR... (Hedef Personel: {hedef_isim if hedef_isim else 'Filtresiz'})")
         print("="*60)
 
         if not os.path.exists(pdf_path):
@@ -565,16 +565,13 @@ class BordroReader:
             return BordroReader._manuel_veri()
 
         veriler = []
-        
-        # GÜNCELLEME 1: Regex'i esnek hale getirdik (12,50 veya 12 veya 12,5 okuyabilsin)
         PARA_REGEX = r'(?:\d{1,3}(?:\.\d{3})*|\d+)(?:,\d{1,2})?'
         
+        # Kesme kelimeleri (değişmedi)
         KESME_KELIMELERI = [
-            "SSK", "ssk", "İnd", "ind",
-            "Bes ", "bes ", "Nafaka", "İcra", 
-            "YASAL", "KESİNTİLER", "ÖZEL KES",
-            "Küm", "Kum", "KÜM", "Matrah", "MATRAH",
-            "Gelir Verg", "G.Vergisi", "Damga", "Ters Bak"
+            "SSK", "ssk", "İnd", "ind", "Bes ", "bes ", "Nafaka", "İcra", 
+            "YASAL", "KESİNTİLER", "ÖZEL KES", "Küm", "Kum", "KÜM", "Matrah", 
+            "MATRAH", "Gelir Verg", "G.Vergisi", "Damga", "Ters Bak"
         ]
 
         try:
@@ -583,6 +580,20 @@ class BordroReader:
                     text = page.extract_text()
                     if not text:
                         continue
+                    
+                    # FİLTRELEME MANTIĞI
+                    if hedef_isim and hedef_isim.lower() != "personel":
+                        norm_text = BordroReader.normalize_str(text)
+                        norm_hedef = BordroReader.normalize_str(hedef_isim)
+                        
+                        # Basit kontrol: Hedef isim metin içinde geçiyor mu?
+                        if norm_hedef not in norm_text:
+                            # Debug Logu: Neden atlandığını göster
+                            print(f"❌ Sayfa {sayfa_no} ATLANDI. (Aranan: '{hedef_isim}', Sayfada Eşleşme Bulunamadı)")
+                            continue # Bir sonraki sayfaya geç
+                        else:
+                            print(f"✅ Sayfa {sayfa_no} İŞLENİYOR. (Personel Doğrulandı: '{hedef_isim}')")
+                    # ---------------------------------------------------------
 
                     lines = text.split('\n')
                     current_donem = None
@@ -594,7 +605,7 @@ class BordroReader:
                     p_fm, p_ubgt, p_ht, p_sorumluluk = 0.0, 0.0, 0.0, 0.0
                     p_ayni, p_izin, p_diger, p_agi, p_net = 0.0, 0.0, 0.0, 0.0, 0.0
 
-                    # 1. TARAMA: DÖNEM BUL
+                    # --- TARAMA MANTIĞI (Aynı kaldı) ---
                     for line in lines:
                         if "201" in line or "202" in line:
                             match = re.search(r'([a-zA-ZçÇğĞıİöÖşŞüÜ]+)\s+(20\d{2})', line)
@@ -607,14 +618,12 @@ class BordroReader:
                                         break
                         if current_donem: break
 
-                    print(f"\n--- SAYFA {sayfa_no} | DÖNEM: {current_donem} ---")
+                    print(f"   ---> İşlenen Dönem: {current_donem}")
                     
-                    # 2. TARAMA: KALEMLER
+                    # 2. TARAMA: KALEMLER (Aynı kaldı)
                     for line in lines:
                         line_lower = line.lower()
-                        
-                        if not re.search(r'\d+[,\.]\d{1,2}', line): # Regex kontrolü esnetildi
-                            continue
+                        if not re.search(r'\d+[,\.]\d{1,2}', line): continue
 
                         temiz_satir = line
                         if "fiili çalışma" not in line_lower and "normal çalışma" not in line_lower:
@@ -632,27 +641,18 @@ class BordroReader:
                         if not valid_vals: continue
 
                         val_tutar = max(valid_vals) 
-                        
-                        # GÜNCELLEME 2: Miktar (Gün) Seçimi Mantığı
                         val_miktar = 0
                         possible_amounts = [x for x in valid_vals if x < val_tutar and x < 400]
                         
                         if possible_amounts:
                             if "fiili çalışma" in line_lower:
-                                # KRİTİK DÜZELTME:
-                                # Satır: "Fiili Çalışma 12,50 ... Toplam Gün 30,00"
-                                # Eğer 'fiili çalışma' satırıysa ve birden fazla küçük sayı varsa,
-                                # muhtemelen İLK sayı (12,50) bizim gün sayımızdır. SONUNCU sayı (30,00) toplam gündür.
                                 val_miktar = possible_amounts[0]
                             else:
-                                # Diğer satırlarda (FM vs.) genelde sonuncusu alınır
                                 val_miktar = possible_amounts[-1]
 
                         # --- A. BRÜT ÜCRET HESABI ---
                         if "fiili çalışma" in line_lower or "normal çalışma" in line_lower or "normal kazanç" in line_lower:
                             if "fazla" not in line_lower:
-                                
-                                # YEDEK PLAN: Regex 12,50'yi yakalayamazsa manuel yakalama
                                 if val_miktar == 0:
                                     basit_sayilar = re.findall(r'\b\d{1,2}[.,]\d{1,2}\b|\b\d{1,2}\b', temiz_satir)
                                     for s in basit_sayilar:
@@ -663,21 +663,15 @@ class BordroReader:
 
                                 if val_miktar > 0 and val_tutar > 0:
                                     current_gun_sayisi = val_miktar
-                                    
-                                    # Hesaplama: (Tutar / Gün) * 30
                                     gunluk_ucret = val_tutar / val_miktar
                                     current_brut_ucret = gunluk_ucret * 30
                                     current_saat_ucreti = current_brut_ucret / 225
                                     
-                                    # Mantık Kontrolü (Limit 1 TL)
                                     if not (1 < current_saat_ucreti < 5000):
-                                        print(f"  ❌ Mantıksız değer: {current_saat_ucreti}")
                                         current_brut_ucret = 0.0
                                         current_saat_ucreti = 0.0
-                                    else:
-                                        print(f"  ✓ {current_donem} | Gün: {current_gun_sayisi} | Tutar: {val_tutar} | Saatlik: {current_saat_ucreti:.2f}")
-                        
-                        # 1. FM (Fazla Mesai)
+
+                        # DİĞER KALEMLER
                         elif any(x in line_lower for x in ["fazla mesai", "f.mesai", "fm ", "f. mesai"]):
                             p_fm += val_tutar
                             if current_saat_ucreti == 0 and val_miktar > 0:
@@ -686,29 +680,23 @@ class BordroReader:
                                     current_saat_ucreti = calculated
                                     current_brut_ucret = calculated * 225
                         
-                        # 2. UBGT
                         elif any(x in line_lower for x in ["genel tatil", "bayram mesai", "resmi tatil"]):
                             p_ubgt += val_tutar
-                            
-                        # 3. HT (Hafta Tatili)
                         elif any(x in line_lower for x in ["pazar mesai", "p.mesai"]):
                             p_ht += val_tutar
-                        
-                        # 4. DİĞERLERİ
                         elif "sorumluluk" in line_lower: p_sorumluluk += val_tutar
                         elif "ayni yardım" in line_lower or "ayni yardim" in line_lower: p_ayni += val_tutar
                         elif "yıllık izin" in line_lower: p_izin += val_tutar
                         elif "diğer gelir" in line_lower or "diğer ek" in line_lower: p_diger += val_tutar
                         elif "agi " in line_lower or "asgari geçim" in line_lower: p_agi += val_tutar
 
-                        # 5. NET ÖDEME
                         if "toplam net" in line_lower or "net ödenen" in line_lower:
                              raw_net = re.findall(PARA_REGEX, line)
                              if raw_net:
                                  vals_net = [BordroReader.metni_sayiya_cevir(x) for x in raw_net]
-                                 if vals_net: p_net = max(vals_net)
+                                 if vals_net: p_net = vals_net[-1]
 
-                    # --- SAYFA SONU KAYDETME ---
+                    # --- VERİ EKLEME (Aynı kaldı) ---
                     if current_donem:
                         mevcut = next((item for item in veriler if item["Donem_Kodu"] == current_donem), None)
                         if mevcut:
@@ -748,17 +736,20 @@ class BordroReader:
             
         if veriler:
             df_ret = pd.DataFrame(veriler)
-            for c in ['Bordro_Brut_Ucret', 'Calisilan_Gun_Sayisi', 'Odenen_Sorumluluk_TL', 'Odenen_Ayni_Yardim_TL', 'Odenen_Yillik_Izin_TL', 'Odenen_Diger_TL', 'Odenen_AGI_TL', 'Odenen_Net_TL']:
+            # Eksik kolonları doldurma
+            cols = ['Bordro_Brut_Ucret', 'Calisilan_Gun_Sayisi', 'Odenen_Sorumluluk_TL', 
+                   'Odenen_Ayni_Yardim_TL', 'Odenen_Yillik_Izin_TL', 'Odenen_Diger_TL', 
+                   'Odenen_AGI_TL', 'Odenen_Net_TL']
+            for c in cols:
                 if c not in df_ret.columns: df_ret[c] = 0.0
             
-            print("\n✅ Bordro okuma tamamlandı:")
-            print(df_ret[['Donem_Kodu', 'Bordro_Brut_Ucret', 'Bordro_Saat_Ucreti', 'Calisilan_Gun_Sayisi']].to_string(index=False))
             return df_ret
             
         return BordroReader._manuel_veri()
     
     @staticmethod
     def _manuel_veri():
+        # Burası aynı kalacak
         return pd.DataFrame([{
             'Donem_Kodu': '2024-01',
             'Bordro_Brut_Ucret': 0.0,
@@ -892,12 +883,12 @@ class ExcelGenerator:
 
         ad = df['Adı Soyadı'].dropna().iloc[0] if not df['Adı Soyadı'].dropna().empty else "Personel"
         temiz_ad = "".join([c if c.isalnum() else "_" for c in str(ad)]).strip()
-        cikti_adi = f"{temiz_ad}_Puantaj.xlsx"
+        cikti_adi = f"{temiz_ad}_PUANTAJ.xlsx"
         cikti_yolu = os.path.join(cikti_klasoru, cikti_adi)
 
         writer = pd.ExcelWriter(cikti_yolu, engine='openpyxl')
-        pivot[final_cols].to_excel(writer, sheet_name='Puantaj', startrow=3, index=False, header=False)
-        ws = writer.book['Puantaj']
+        pivot[final_cols].to_excel(writer, sheet_name='PUANTAJ', startrow=3, index=False, header=False)
+        ws = writer.book['PUANTAJ']
         
         # --- Stil İşlemleri ---
         sari = PatternFill("solid", fgColor=Config.RENK_SARI)
@@ -949,15 +940,19 @@ class ExcelGenerator:
         print(f"✅ Puantaj ve Veri Hazır: {cikti_adi}")
         
         # KRİTİK: Hem dosya yolunu hem de işlenmiş DataFrame'i döndür
-        return cikti_yolu, df
+        return cikti_yolu, df, temiz_ad
 
     @staticmethod
-    def alacak_raporu_olustur(processed_df, bordro_df, cikti_klasoru):
+    def alacak_raporu_olustur(processed_df, bordro_df, cikti_klasoru, dosya_oneki=""):
         print("\n" + "="*60)
         print("💰 HASSAS ALACAK RAPORU (PUANTAJ VERİSİ İLE)")
         print("="*60)
     
-        dosya_adi = "HASSAS_ALACAK_RAPORU.xlsx"
+        # Dosya ismine ön ek ekle (Örn: ECEVIT_SENGUN_HASSAS_ALACAK_RAPORU.xlsx)
+        if dosya_oneki:
+            dosya_adi = f"{dosya_oneki}_ALACAK_RAPORU.xlsx"
+        else:
+            dosya_adi = "HASSAS_ALACAK_RAPORU.xlsx"
         cikti_yolu = os.path.join(cikti_klasoru, dosya_adi)
         
         # 1. Puantajdan gelen veriyi kopyala
@@ -1019,8 +1014,8 @@ class ExcelGenerator:
         # --- BİRLEŞTİRME VE MERGE ---
         ozet = pd.merge(ozet_fm_ht, ozet_ubgt, on='Donem_Kodu', how='outer').fillna(0)
         
-        # Bordro verileriyle birleştir (Burada hala YYYY-MM formatındayız, sıralama bozulmasın diye)
-        ana = pd.merge(ozet, bordro_df, on='Donem_Kodu', how='left').fillna(0)
+        # Bordro verileriyle birleştir (how='outer' yaparak her iki taraftaki veriyi de koruyoruz)
+        ana = pd.merge(ozet, bordro_df, on='Donem_Kodu', how='outer').fillna(0)
         ana = ana.sort_values('Donem_Kodu') # Kronolojik sıralama burada yapılıyor
         
         # --- TARİH FORMATI DEĞİŞİKLİĞİ (Haz.17) ---
@@ -1128,13 +1123,18 @@ class ExcelGenerator:
         # BORDRO SEKMESİ
         b_export = ana.copy()
         
-        # İstatistiksel veriler
-        b_export['Gunluk_Ucret_Brut'] = round(b_export['Bordro_Saat_Ucreti'] * 7.5, 2)
-        b_export['Aylik_Ucret_Brut'] = round(b_export['Bordro_Saat_Ucreti'] * 225, 2)
-        
-        # --- KRİTİK DEĞİŞİKLİK BURADA ---
-        # 'FM_Saati' sütununa direkt olarak bizim hesapladığımız (Hafta kaydırmalı) 'Hak_FM_Saat' verisini atıyoruz.
-        # Artık bu sütunda PDF verisi değil, olması gereken hesaplanmış saat görünecek.
+        # Eğer Bordro_Brut_Ucret sütunu doluysa onu kullan, yoksa (puantajdan geldiyse) saatten hesapla
+        if 'Bordro_Brut_Ucret' in b_export.columns:
+            b_export['Aylik_Ucret_Brut'] = b_export['Bordro_Brut_Ucret'].fillna(0)
+            # Eğer bordroda brüt 0 gelmişse (sadece puantaj varsa) saatten hesapla
+            mask = b_export['Aylik_Ucret_Brut'] == 0
+            b_export.loc[mask, 'Aylik_Ucret_Brut'] = round(b_export.loc[mask, 'Bordro_Saat_Ucreti'] * 225, 2)
+        else:
+            b_export['Aylik_Ucret_Brut'] = round(b_export['Bordro_Saat_Ucreti'] * 225, 2)
+
+        # Günlük ücreti de Aylık / 30 mantığıyla göster (Sizin istediğiniz mantık)
+        b_export['Gunluk_Ucret_Brut'] = round(b_export['Aylik_Ucret_Brut'] / 30, 2)
+
         b_export['FM_Saati'] = b_export['Hak_FM_Saat']
         
         # Eksik sütunları tamamla
@@ -1331,7 +1331,6 @@ def main():
                         st.error(str(e))
 
     # DURUM 2: Analiz yapılmış AMA henüz hesaplama bitmemişse -> Tabloyu göster
-    # DURUM 2: Analiz yapılmış AMA henüz hesaplama bitmemişse -> Tabloyu göster
     elif st.session_state.ham_veri_onizleme is not None and not st.session_state.hesaplama_tamam:
         
         # 1. TÜM BU BÖLÜMÜ BİR 'PLACEHOLDER' İÇİNE ALIYORUZ
@@ -1360,58 +1359,93 @@ def main():
             # Buton da kutunun içinde
             hesapla_btn = st.button("🚀 Onayla ve Hesaplamayı Başlat", type="primary", use_container_width=True)
             
-        # 3. BUTONA BASILINCA KUTUYU YOK ET
         if hesapla_btn:
-            # SİHİRLİ SATIR BURASI: İçeriği (tabloyu ve butonu) anında siler
+            # Sihirli Satır: Butona basınca tabloyu ve butonu ekrandan siler
             preview_container.empty() 
             
             if pdf_file is None:
                 st.error("⚠️ Lütfen sol menüden Bordro PDF dosyasını yükleyin!")
-                # Hata durumunda tabloyu geri getirmek için rerun yapmak gerekebilir, 
-                # ama şimdilik hata mesajı yeterli.
             else:
                 paths = Config.get_paths()
                 with open(paths["BORDRO_FILE"], "wb") as buffer:
                     shutil.copyfileobj(pdf_file, buffer)
                 
-                # Config güncelleme
+                # Ayarları Enjekte Et
                 Config.HAFTALIK_YASAL_SURE = yeni_haftalik_sure
                 Config.GUNLUK_STANDART_SAAT = yeni_gunluk_sure
                 Config.GECE_CALISMA_TOLERANS_DK = tolerans_dk
                 Config.MINIMUM_SURE_GARANTISI = yeni_min_garanti
                 
-                # Status bar artık boş ekranda görünecek
                 with st.status("Final raporlar hazırlanıyor...", expanded=True) as status:
                     try:
-                        # 1. Veri Kaydet
+                        # 1. Düzeltilmiş veriyi kaydet
                         revize_yol = os.path.join(paths["PDKS"], "Revize_Veri.xlsx")
                         edited_df.to_excel(revize_yol, index=False)
                         st.write("✅ Veriler işlendi.")
-                        # 2. Hesaplamalar
-                        st.write("⏳ Bordro verisi okunuyor.")
-                        puantaj_yolu, processed_df = ExcelGenerator.gorsel_puantaj_olustur(revize_yol, paths["PUANTAJ"])
-                        bordro_df = BordroReader.pdf_oku(paths["BORDRO_FILE"])
-                        st.write("✅ Bordro verisi okundu.")
-                        st.write("⏳ Alacak raporu hazırlanıyor...")
-                        alacak_sonucu = ExcelGenerator.alacak_raporu_olustur(processed_df, bordro_df, paths["RAPOR"])
 
-                        st.write("✅ Bordro ve Alacak Raporu oluşturuldu.")
-                        # 3. Metrikleri Kaydet
-                        toplam_fark = alacak_sonucu['Fark_FM_TL'].sum() + alacak_sonucu['Fark_UBGT_TL'].sum() + alacak_sonucu['Fark_HT_TL'].sum()
+                        # --- 1. PUANTAJ HESAPLAMA (Dinamik Kontrol) ---
+                        st.write("🔍 Puantaj hesaplanıyor...")
+                        raw_puantaj = ExcelGenerator.gorsel_puantaj_olustur(revize_yol, paths["PUANTAJ"])
+                        
+                        # Gelen veri 3'lü mü (yol, df, isim) yoksa 2'li mi (yol, df)?
+                        if isinstance(raw_puantaj, tuple) and len(raw_puantaj) == 3:
+                            puantaj_yolu, processed_df, personel_adi = raw_puantaj
+                        elif isinstance(raw_puantaj, tuple) and len(raw_puantaj) == 2:
+                            puantaj_yolu, processed_df = raw_puantaj
+                            personel_adi = "Personel"
+                        else:
+                            # Çok eski versiyon ise sadece yol dönüyor olabilir
+                            puantaj_yolu = raw_puantaj
+                            processed_df = pd.read_excel(puantaj_yolu) # Mecburen tekrar oku
+                            personel_adi = "Personel"
+
+                        st.write(f"📊 Puantaj Hazır: {personel_adi}")
+                        
+                        st.write("📄 Bordro PDF okunuyor...")
+                        bordro_df = BordroReader.pdf_oku(paths["BORDRO_FILE"], hedef_isim=personel_adi)
+                        
+                        st.write("💰 Alacaklar hesaplanıyor...")
+                        
+                        # --- 2. ALACAK HESAPLAMA (HATA ÇIKAN YER BURASIYDI) ---
+                        # Burayı "Akıllı Kontrol" ile sarıyoruz.
+                        raw_alacak = ExcelGenerator.alacak_raporu_olustur(
+                            processed_df, 
+                            bordro_df, 
+                            paths["RAPOR"], 
+                            dosya_oneki=personel_adi 
+                        )
+                        
+                        # GELEN VERİNİN TİPİNE BAKIP ONA GÖRE DAVRANIYORUZ:
+                        if isinstance(raw_alacak, tuple) or isinstance(raw_alacak, list):
+                            # Yeni versiyon: (DosyaYolu, DataFrame)
+                            alacak_sonucu_path = raw_alacak[0]
+                            alacak_sonucu_df = raw_alacak[1]
+                        else:
+                            # Eski versiyon: Sadece DataFrame dönmüş
+                            alacak_sonucu_df = raw_alacak
+                            # Dosya yolunu kendimiz tahmin ediyoruz
+                            alacak_sonucu_path = os.path.join(paths["RAPOR"], f"{personel_adi}_ALACAK_RAPORU.xlsx")
+                        
+                        # Metrikleri Hesapla
+                        toplam_fark = alacak_sonucu_df['Fark_FM_TL'].sum() + alacak_sonucu_df['Fark_UBGT_TL'].sum() + alacak_sonucu_df['Fark_HT_TL'].sum()
+                        
                         st.session_state.metrikler = {
                             "alacak": f"{toplam_fark:,.2f} TL",
-                            "mesai": f"{alacak_sonucu['Hak_FM_Saat'].sum():,.1f} Sa",
-                            "ubgt": f"{alacak_sonucu['Hak_UBGT_Gun'].sum():,.1f} Gün",
-                            "ht": f"{alacak_sonucu['Hak_HT_Gun'].sum():,.1f} Gün"
+                            "mesai": f"{alacak_sonucu_df['Hak_FM_Saat'].sum():,.1f} Sa",
+                            "ubgt": f"{alacak_sonucu_df['Hak_UBGT_Gun'].sum():,.1f} Gün",
+                            "ht": f"{alacak_sonucu_df['Hak_HT_Gun'].sum():,.1f} Gün"
                         }
                         
                         st.session_state.hesaplama_tamam = True
-                        status.update(label="✅ İşlem Tamamlandı!", state="complete", expanded=False)
+                        status.update(label="✅ İşlem Başarıyla Tamamlandı!", state="complete", expanded=False)
                         time.sleep(1)
-                        st.rerun() # Sonuç ekranına geçiş
+                        st.rerun() 
                         
                     except Exception as e:
-                        st.error(f"Hata: {e}")
+                        st.error(f"Bir hata oluştu: {str(e)}")
+                        # Detaylı hata analizi için:
+                        import traceback
+                        st.code(traceback.format_exc())
 
     # DURUM 3: Hesaplama bitmişse -> Sadece Sonuçları Göster
     elif st.session_state.hesaplama_tamam:
@@ -1432,46 +1466,43 @@ def main():
         # Bu sayede butonlar ortada toplanır.
         bosluk_sol, col_btn1, col_btn2, bosluk_sag = st.columns([1, 2, 2, 1])
         
-        # ALACAK RAPORU (Sol Buton)
-        alacak_yolu = os.path.join(paths["RAPOR"], "HASSAS_ALACAK_RAPORU.xlsx")
-        if os.path.exists(alacak_yolu):
+        # 1. ALACAK RAPORUNU BUL
+        alacak_dosyalar = [f for f in os.listdir(paths["RAPOR"]) if f.endswith('.xlsx') and not f.startswith('~$')]
+        if alacak_dosyalar:
+            dosya_adi = alacak_dosyalar[0] # Klasörde zaten tek dosya olmalı
+            alacak_yolu = os.path.join(paths["RAPOR"], dosya_adi)
             with open(alacak_yolu, "rb") as f:
-                # Butonu col_btn1 içine koyuyoruz ve genişletiyoruz
                 with col_btn1:
                     st.download_button(
-                        "💰 Alacak Raporu", 
+                        f"💰 {"ALACAK RAPORU"}", # Buton üzerinde dosya adı görünsün
                         f, 
-                        file_name="HASSAS_ALACAK_RAPORU.xlsx", 
+                        file_name=dosya_adi, 
                         key="dl_alacak_btn",
-                        use_container_width=True # Butonu sütuna yayar, şık durur
+                        use_container_width=True
                     )
 
-        # PUANTAJ (Sağ Buton)
-        p_dosyalar = [f for f in os.listdir(paths["PUANTAJ"]) if f.endswith('.xlsx')]
+        # 2. PUANTAJ DOSYASINI BUL
+        p_dosyalar = [f for f in os.listdir(paths["PUANTAJ"]) if f.endswith('.xlsx') and not f.startswith('~$')]
         if p_dosyalar:
-            p_yolu = os.path.join(paths["PUANTAJ"], p_dosyalar[0])
+            dosya_adi = p_dosyalar[0]
+            p_yolu = os.path.join(paths["PUANTAJ"], dosya_adi)
             with open(p_yolu, "rb") as f:
-                # Butonu col_btn2 içine koyuyoruz ve genişletiyoruz
                 with col_btn2:
                     st.download_button(
-                        "📊 Görsel Puantaj", 
+                        f"📊 {"PUANTAJ"}", 
                         f, 
-                        file_name="Puantaj.xlsx", 
+                        file_name=dosya_adi, 
                         key="dl_puan_btn",
-                        use_container_width=True # Butonu sütuna yayar
+                        use_container_width=True
                     )
-        
-        st.write("") # Biraz boşluk bırakalım
-        
-        # Ekranı Sol(1) - Orta(2) - Sağ(1) oranında bölüyoruz
+
+        st.write("")
         col_sol, col_orta, col_sag = st.columns([1, 2, 1])
-        
         with col_orta:
-            # Butonu sadece orta sütuna koyuyoruz
             if st.button("🔄 Yeni Hesaplama Yap", use_container_width=True):
                  st.session_state.hesaplama_tamam = False
                  st.session_state.ham_veri_onizleme = None
-                 st.session_state.reset_counter += 1 # Dosya yükleyicileri de temizlesin
+                 st.session_state.reset_counter += 1
                  st.rerun()
 
 def auto_garbage_collector(max_age_seconds=1800): # 7200 saniye = 2 Saat
