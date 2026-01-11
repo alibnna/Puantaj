@@ -641,7 +641,7 @@ class BordroReader:
                             p_ubgt += val_tutar
                             
                         # 3. HT (Hafta Tatili)
-                        elif any(x in line_lower for x in ["pazar mesai", "p.mesai", "hafta tatili"]):
+                        elif any(x in line_lower for x in ["pazar mesai", "p.mesai"]):
                             p_ht += val_tutar
                         
                         # 4. DİĞERLERİ
@@ -997,7 +997,7 @@ class ExcelGenerator:
         ana['Donem_Kodu'] = ana['Donem_Kodu'].apply(format_donem_tr)
         
         # --- FİNANSAL HESAPLAMALAR ---
-        ana['Bordro_Saat_Ucreti'] = ana['Bordro_Saat_Ucreti'].replace(0, np.nan).ffill().bfill().fillna(0)
+        ana['Bordro_Saat_Ucreti'] = ana['Bordro_Saat_Ucreti'].replace(0, np.nan).ffill().bfill().fillna(0).astype(float).round(2)
     
         ana['Hak_FM_Saat'] = ana['Hak_FM_Saat'].apply(lambda x: float(Decimal(str(x)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)))
         
@@ -1031,10 +1031,11 @@ class ExcelGenerator:
         toplam_alacak = 0
     
         def sheet_yap(isim, veri, renk):
-            # Veri boş olsa bile formatın bozulmaması için kontrol
-            if veri.empty:
-                 return 0.0
-                 
+            # Veriyi önce yuvarla (Matematiksel garanti)
+            if not veri.empty:
+                cols_to_round = veri.columns[1:] 
+                veri[cols_to_round] = veri[cols_to_round].astype(float).round(2)
+
             veri.to_excel(writer, sheet_name=isim, index=False, startrow=2)
             ws = writer.book[isim]
             ws['A1'] = f"{isim} FARK CETVELİ"
@@ -1042,6 +1043,7 @@ class ExcelGenerator:
             ws['A1'].fill = PatternFill("solid", fgColor=renk)
             ws.merge_cells('A1:F1')
             ws['A1'].alignment = Alignment("center", "center")
+            
             t = veri.iloc[:, -1].sum()
             lr = ws.max_row + 2
             ws[f'A{lr}'] = "TOPLAM:"
@@ -1059,7 +1061,7 @@ class ExcelGenerator:
     
         t1 = ana[sutunlar['Fazla Mesai']].copy()
         t1.columns = ['Dönem', 'Saat Ücreti', 'Hesaplanan (Saat)', 'Hesaplanan TL', 'Bordro Ödenen', 'FARK']
-        t1 = t1[t1['FARK'] > 0]
+
         toplam_alacak += sheet_yap('FAZLA_MESAI', t1, Config.RENK_MAVI)
     
         t2 = ana[sutunlar['UBGT']].copy()
@@ -1079,31 +1081,40 @@ class ExcelGenerator:
     
         # BORDRO SEKMESİ
         b_export = ana.copy()
+        
+        # İstatistiksel veriler
         b_export['Gunluk_Ucret_Brut'] = round(b_export['Bordro_Saat_Ucreti'] * 7.5, 2)
         b_export['Aylik_Ucret_Brut'] = round(b_export['Bordro_Saat_Ucreti'] * 225, 2)
         
-        def fm_saati_hesapla(row):
-            ucret = row['Bordro_Saat_Ucreti']
-            odenen = row['Odenen_FM_TL']
-            if ucret > 0 and odenen > 0:
-                return round(odenen / (ucret * 1.5), 1)
-            return 0.0
-        b_export['FM_Saati'] = b_export.apply(fm_saati_hesapla, axis=1)
+        # --- KRİTİK DEĞİŞİKLİK BURADA ---
+        # 'FM_Saati' sütununa direkt olarak bizim hesapladığımız (Hafta kaydırmalı) 'Hak_FM_Saat' verisini atıyoruz.
+        # Artık bu sütunda PDF verisi değil, olması gereken hesaplanmış saat görünecek.
+        b_export['FM_Saati'] = b_export['Hak_FM_Saat']
         
+        # Eksik sütunları tamamla
         yeni_sutunlar = ['Odenen_Sorumluluk_TL', 'Odenen_Ayni_Yardim_TL', 'Odenen_Yillik_Izin_TL', 'Odenen_Diger_TL', 'Odenen_AGI_TL', 'Odenen_Net_TL']
         for c in yeni_sutunlar:
             if c not in b_export.columns: b_export[c] = 0.0
         if 'Banka_Odemesi' not in b_export.columns: b_export['Banka_Odemesi'] = 0.0
         b_export['Bordro_Imza'] = "yok"
         
+        # SÜTUN İSİMLENDİRME (ORİJİNAL İSİMLER KORUNDU)
         rename_map = {
             'Donem_Kodu': 'DÖNEM',
             'Aylik_Ucret_Brut': 'AYLIK ÜCRET (Brüt)',
             'Gunluk_Ucret_Brut': 'GÜNLÜK ÜCRET (Brüt)',
+            
+            # Burada 'FM_Saati' artık bizim hesapladığımız veriyi taşıyor
+            'FM_Saati': 'F.M. Saati', 
             'Odenen_FM_TL': 'F.M  Ücreti',
-            'FM_Saati': 'F.M. Saati',
-            'Odenen_HT_TL': ' H.T Ücreti',
-            'Odenen_UBGT_TL': ' UBGT Ücreti',
+            
+            # Hafta Tatili ve UBGT Günleri de bizim hesapladığımız verilerden gelsin
+            'Hak_HT_Gun': 'H.T Günü',       # Bizim hesapladığımız gün sayısı
+            'Odenen_HT_TL': ' H.T Ücreti',  # Bordroda ödenen para
+            
+            'Hak_UBGT_Gun': 'UBGT Günü',    # Bizim hesapladığımız gün sayısı
+            'Odenen_UBGT_TL': ' UBGT Ücreti', # Bordroda ödenen para
+            
             'Odenen_Diger_TL': 'Diğer Ek Ödeme ',
             'Odenen_Sorumluluk_TL': 'Sorumluluk Ücreti',
             'Odenen_Ayni_Yardim_TL': 'AYNI YARDIM',
@@ -1113,21 +1124,52 @@ class ExcelGenerator:
             'Banka_Odemesi': 'Banka  Ödemesi',
             'Bordro_Imza': 'Bordro  İmza '
         }
+        
+        # Sütunları seç ve yeniden adlandır
         b_export = b_export.rename(columns=rename_map)
+        
+        # Sadece map'te tanımlı olan sütunları al
         final_cols = [col for col in rename_map.values() if col in b_export.columns]
         b_export = b_export[final_cols]
+        
+        # Sütun isimleri yukarıdaki rename_map'ten geliyor
+        bosaltilacak_sutunlar = [
+            'Diğer Ek Ödeme ', 
+            'Sorumluluk Ücreti', 
+            'AYNI YARDIM', 
+            'YILLIK İZİN ', 
+            'AGİ '
+        ]
+        
+        for col in bosaltilacak_sutunlar:
+            if col in b_export.columns:
+                # 0 değerlerini NaN (boş) yapıyoruz. 
+                # (Excel'de hücre boş görünür)
+                b_export[col] = b_export[col].replace({0: np.nan, 0.0: np.nan})
+                
+        # Excel'e Yaz
         b_export.to_excel(writer, sheet_name='Bordro', index=False)
         
+        # FORMATLAMA
         ws_b = writer.book['Bordro']
         header_fill = PatternFill("solid", fgColor="D9D9D9")
+        
         for cell in ws_b[1]:
             cell.fill = header_fill
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal='center')
+        
         para_format = '#,##0.00 "₺"'
         for row in ws_b.iter_rows(min_row=2, max_col=len(final_cols)):
             for cell in row:
-                if cell.col_idx not in [1, 5, 15]: cell.number_format = para_format
+                # Kolon indekslerine göre formatlama (Basit mantık: Tutar içerenler para formatı)
+                # Başlık ismini kontrol ederek format verelim
+                col_name = ws_b.cell(1, cell.col_idx).value
+                if col_name and any(x in col_name for x in ['Ücret', 'Tutar', 'Ödeme', 'YARDIM', 'AGİ']):
+                     cell.number_format = para_format
+                elif col_name and any(x in col_name for x in ['Saat', 'Gün']):
+                     cell.number_format = '0.00'
+
         ws_b.column_dimensions['A'].width = 15
         ws_b.column_dimensions['B'].width = 20
         ws_b.column_dimensions['M'].width = 25
