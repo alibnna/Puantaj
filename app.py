@@ -1,3 +1,9 @@
+"""
+Profesyonel Puantaj ve Alacak Hesaplama Sistemi
+================================================
+Bordro okuma ve finansal hesaplama - ORİJİNAL NOTEBOOK MANTIĞI
+"""
+
 import pandas as pd
 import numpy as np
 import os
@@ -1240,23 +1246,22 @@ st.markdown("""
 def main():
     # 1. HAFIZA (SESSION STATE) TANIMLARI
     if 'reset_counter' not in st.session_state:
-        st.session_state.reset_counter = 0  # UI'daki dosyaları temizlemek için sayaç
+        st.session_state.reset_counter = 0
     if 'hesaplama_tamam' not in st.session_state:
         st.session_state.hesaplama_tamam = False
     if 'metrikler' not in st.session_state:
-        st.session_state.metrikler = {}
+        st.session_state.metrikler = {}  
+    if 'ham_veri_onizleme' not in st.session_state:
+        st.session_state.ham_veri_onizleme = None
 
     st.title("📊 Puantaj Otomasyon Sistemi - <3")
     st.info("Kullanıcıya özel izole çalışma alanı aktif. Umarım düzgün çalışır :)")
 
-    # Mevcut kullanıcıya özel dinamik yolları al
     paths = Config.get_paths()
 
-    # SOL PANEL: Dosya Yükleme
+    # --- SIDEBAR (AYNI KALDI) ---
     with st.sidebar:
         st.header("📁 Dosya Yükleme")
-        
-        # DİKKAT: 'key' kısmına sayacı ekledik. Sayaç değiştikçe kutular boşalacak.
         excel_files = st.file_uploader(
             "Excel Dosyaları", 
             accept_multiple_files=True, 
@@ -1269,132 +1274,151 @@ def main():
             key=f"pdf_up_{st.session_state.reset_counter}"
         )
 
-    st.divider() # Görsel ayırıcı çizgi
+    st.divider()
 
-    # --- AYARLAR PANELİ ---
     with st.sidebar.expander("⚙️ Hesaplama Parametreleri", expanded=False):
         st.caption("Varsayılan yasal değerleri buradan değiştirebilirsiniz.")
+        yeni_haftalik_sure = st.number_input("Haftalık Yasal Süre (Saat)", min_value=1.0, max_value=60.0, value=45.0, step=0.5)
+        yeni_gunluk_sure = st.number_input("Günlük Standart (Saat)", min_value=1.0, max_value=24.0, value=7.5, step=0.5)
+        yeni_min_garanti = st.checkbox("Min. Süre Garantisi (7.5 Sa)", value=True)
+        tolerans_dk = st.number_input("Gece Geçiş Toleransı (Dakika)", min_value=0, max_value=300, value=0)
         
-        # 1. Çalışma Süreleri
-        yeni_haftalik_sure = st.number_input(
-            "Haftalık Yasal Süre (Saat)", 
-            min_value=1.0, 
-            max_value=60.0, 
-            value=45.0, 
-            step=0.5,
-            help="İş Kanunu'na göre genelde 45 saattir."
-        )
-        
-        yeni_gunluk_sure = st.number_input(
-            "Günlük Standart (Saat)", 
-            min_value=1.0, 
-            max_value=24.0, 
-            value=7.5, 
-            step=0.5,
-            help="Denkleştirme için baz alınan günlük süre."
-        )
-        
-        # 2. Mantıksal Ayarlar
-        yeni_min_garanti = st.checkbox(
-            "Min. Süre Garantisi (7.5 Sa)", 
-            value=True,
-            help="İşçi işe gelmişse, az çalışsa bile 7.5 saat çalışmış sayılsın mı?"
-        )
-        # 3. Gece Çalışma Toleransı
-        tolerans_dk = st.number_input(
-            "Gece Geçiş Toleransı (Dakika)",
-            min_value=0,
-            max_value=300,
-            value=0,
-            help="Gece çalışması hesaplanırken, geceye denk gelen süreden düşülecek tolerans payı. (Örn: Geç kart basmaları yoksaymak için)"
-        )
-        
-        # ♻️ TÜM VERİLERİ SIFIRLA BUTONU
         if st.sidebar.button("♻️ Tüm Verileri ve UI'ı Sıfırla"):
-            # A. Diski temizle (Sadece bu kullanıcının klasörü)
             if os.path.exists(paths["BASE"]):
                 shutil.rmtree(paths["BASE"])
-            
-            # B. State'i temizle
             st.session_state.hesaplama_tamam = False
             st.session_state.metrikler = {}
-            
-            # C. UI SIFIRLAMA KRİTİĞİ: Sayacı artırıyoruz
+            st.session_state.ham_veri_onizleme = None # Veriyi de sıfırla
             st.session_state.reset_counter += 1
-            
-            # D. Sayfayı yeniden başlat (Yeni keyler ile kutular boş gelecek)
             st.rerun()
 
-    # HESAPLAMA AKIŞI
-    # HESAPLAMA AKIŞI BÖLÜMÜNÜ ŞÖYLE GÜNCELLEYİN:
-    if st.button("🚀 Hesaplamayı Başlat"):
+    # ============================================================================
+    # AKIŞ KONTROLÜ (WIZARD MANTIĞI)
+    # ============================================================================
 
-        # --- CONFIG ENJEKSİYONU BAŞLANGICI ---
-        Config.HAFTALIK_YASAL_SURE = yeni_haftalik_sure
-        Config.GUNLUK_STANDART_SAAT = yeni_gunluk_sure
-        Config.MINIMUM_SURE_GARANTISI = yeni_min_garanti
-        Config.GECE_CALISMA_TOLERANS_DK = tolerans_dk
+    # DURUM 1: Henüz analiz yapılmamışsa "Analiz Et" butonunu göster
+    # (Veri varsa veya Hesaplama bitmişse bu buton gizlenir)
+    if st.session_state.ham_veri_onizleme is None and not st.session_state.hesaplama_tamam:
+        
+        analyze_btn = st.button("🔍 Verileri Analiz Et", use_container_width=True)
 
-        st.toast(f"⚙️ Ayarlar uygulandı: Haftalık {Config.HAFTALIK_YASAL_SURE} saat baz alınacak.", icon="✅")
-        # --- CONFIG ENJEKSİYONU BİTİŞİ ---
-        if not excel_files or not pdf_file:
-            st.warning("Lütfen dosyaları yükleyin.")
-            return
+        if analyze_btn:
+            if not excel_files:
+                st.warning("⚠️ Lütfen önce Excel dosyalarını yükleyin.")
+            else:
+                paths = Config.klasorleri_hazirla()
+                
+                with st.status("Veriler taranıyor ve temizleniyor...", expanded=True) as status:
+                    try:
+                        for f in excel_files:
+                            with open(os.path.join(paths["HAM"], f.name), "wb") as buffer:
+                                shutil.copyfileobj(f, buffer)
+                        
+                        temiz_yol = ETLWorker.calistir_etl(paths["HAM"], paths["PDKS"], "Temiz_Veri.xlsx")
+                        
+                        if temiz_yol:
+                            df_preview = pd.read_excel(temiz_yol)
+                            df_preview['Tarih'] = pd.to_datetime(df_preview['Tarih'])
+                            st.session_state.ham_veri_onizleme = df_preview
+                            
+                            status.update(label="✅ Analiz Tamamlandı!", state="complete", expanded=False)
+                            time.sleep(0.5)
+                            st.rerun() # EKRANI YENİLE (Butonu gizlemek için şart)
+                        else:
+                            status.update(label="❌ Veri okunamadı!", state="error")
+                    except Exception as e:
+                        status.update(label="❌ Hata", state="error")
+                        st.error(str(e))
 
-        # Klasörleri zorla oluştur
-        paths = Config.klasorleri_hazirla()
+    # DURUM 2: Analiz yapılmış AMA henüz hesaplama bitmemişse -> Tabloyu göster
+    # DURUM 2: Analiz yapılmış AMA henüz hesaplama bitmemişse -> Tabloyu göster
+    elif st.session_state.ham_veri_onizleme is not None and not st.session_state.hesaplama_tamam:
+        
+        # 1. TÜM BU BÖLÜMÜ BİR 'PLACEHOLDER' İÇİNE ALIYORUZ
+        preview_container = st.empty()
+        
+        # 2. Tablo ve Butonu bu kutunun içine çiziyoruz
+        with preview_container.container():
+            st.subheader("📝 Veri Önizleme ve Düzeltme")
+            st.info("Tablodaki hatalı saatleri (Örn: 08:00) üzerine çift tıklayarak düzeltebilirsiniz.")
 
-        with st.status("İşlemler yürütülüyor...") as status:
-            try:
-                # 1. Dosyaları Kaydet
-                st.write("📂 Dosyalar sunucuya kaydediliyor...")
-                for f in excel_files:
-                    with open(os.path.join(paths["HAM"], f.name), "wb") as buffer:
-                        shutil.copyfileobj(f, buffer)
+            edited_df = st.data_editor(
+                st.session_state.ham_veri_onizleme,
+                num_rows="dynamic",
+                use_container_width=True,
+                height=400,
+                key="data_editor_key",
+                column_config={
+                    "Giriş": st.column_config.TextColumn("Giriş Saati", help="Format: 08:00"),
+                    "Çıkış": st.column_config.TextColumn("Çıkış Saati", help="Format: 18:00"),
+                    "Tarih": st.column_config.DateColumn("Tarih", format="YYYY-MM-DD"),
+                }
+            )
+
+            st.write("---")
+            
+            # Buton da kutunun içinde
+            hesapla_btn = st.button("🚀 Onayla ve Hesaplamayı Başlat", type="primary", use_container_width=True)
+            
+        # 3. BUTONA BASILINCA KUTUYU YOK ET
+        if hesapla_btn:
+            # SİHİRLİ SATIR BURASI: İçeriği (tabloyu ve butonu) anında siler
+            preview_container.empty() 
+            
+            if pdf_file is None:
+                st.error("⚠️ Lütfen sol menüden Bordro PDF dosyasını yükleyin!")
+                # Hata durumunda tabloyu geri getirmek için rerun yapmak gerekebilir, 
+                # ama şimdilik hata mesajı yeterli.
+            else:
+                paths = Config.get_paths()
                 with open(paths["BORDRO_FILE"], "wb") as buffer:
                     shutil.copyfileobj(pdf_file, buffer)
-
-                # 2. Notebook Mantığını Çalıştır
-                st.write("🔍 PDKS verileri temizleniyor...")
-                temiz_yol = ETLWorker.calistir_etl(paths["HAM"], paths["PDKS"], "Temiz_Veri.xlsx")
                 
-                if temiz_yol:
-                    st.write("📊 Görsel puantaj oluşturuluyor ve veri hesaplanıyor...")
-                    # DİKKAT: Artık iki değer dönüyor (yol ve dataframe)
-                    puantaj_yolu, processed_df = ExcelGenerator.gorsel_puantaj_olustur(temiz_yol, paths["PUANTAJ"])
-                    # icon parametresine doğrudan emoji yapıştırıyoruz
-                    st.toast(f"📊 Puantaj hesaplandı. Bordro analizi başlıyor.", icon="📄")
-                    st.write("📄 Bordro analiz ediliyor...")
-                    bordro_df = BordroReader.pdf_oku(paths["BORDRO_FILE"])
-                    
-                    st.write("💰 Alacak farkları hesaplanıyor (Puantaj verisi ile)...")
-                    # DİKKAT: Artık processed_df'i gönderiyoruz, temiz_yol'u değil.
-                    alacak_sonucu = ExcelGenerator.alacak_raporu_olustur(processed_df, bordro_df, paths["RAPOR"])
+                # Config güncelleme
+                Config.HAFTALIK_YASAL_SURE = yeni_haftalik_sure
+                Config.GUNLUK_STANDART_SAAT = yeni_gunluk_sure
+                Config.GECE_CALISMA_TOLERANS_DK = tolerans_dk
+                Config.MINIMUM_SURE_GARANTISI = yeni_min_garanti
+                
+                # Status bar artık boş ekranda görünecek
+                with st.status("Final raporlar hazırlanıyor...", expanded=True) as status:
+                    try:
+                        # 1. Veri Kaydet
+                        revize_yol = os.path.join(paths["PDKS"], "Revize_Veri.xlsx")
+                        edited_df.to_excel(revize_yol, index=False)
+                        st.write("✅ Veriler işlendi.")
+                        # 2. Hesaplamalar
+                        st.write("⏳ Bordro verisi okunuyor.")
+                        puantaj_yolu, processed_df = ExcelGenerator.gorsel_puantaj_olustur(revize_yol, paths["PUANTAJ"])
+                        bordro_df = BordroReader.pdf_oku(paths["BORDRO_FILE"])
+                        st.write("✅ Bordro verisi okundu.")
+                        st.write("⏳ Alacak raporu hazırlanıyor...")
+                        alacak_sonucu = ExcelGenerator.alacak_raporu_olustur(processed_df, bordro_df, paths["RAPOR"])
 
-                    # 3. Metrikleri Hesapla
-                    if isinstance(alacak_sonucu, pd.DataFrame):
+                        st.write("✅ Bordro ve Alacak Raporu oluşturuldu.")
+                        # 3. Metrikleri Kaydet
                         toplam_fark = alacak_sonucu['Fark_FM_TL'].sum() + alacak_sonucu['Fark_UBGT_TL'].sum() + alacak_sonucu['Fark_HT_TL'].sum()
-                        toplam_mesai = alacak_sonucu['Hak_FM_Saat'].sum()
-                        toplam_ubgt = alacak_sonucu['Hak_UBGT_Gun'].sum()
-                        toplam_ht = alacak_sonucu['Hak_HT_Gun'].sum()
-                        
                         st.session_state.metrikler = {
                             "alacak": f"{toplam_fark:,.2f} TL",
-                            "mesai": f"{toplam_mesai:,.1f} Sa",
-                            "ubgt": f"{toplam_ubgt:,.1f} Gün",
-                            "ht": f"{toplam_ht:,.1f} Gün"
+                            "mesai": f"{alacak_sonucu['Hak_FM_Saat'].sum():,.1f} Sa",
+                            "ubgt": f"{alacak_sonucu['Hak_UBGT_Gun'].sum():,.1f} Gün",
+                            "ht": f"{alacak_sonucu['Hak_HT_Gun'].sum():,.1f} Gün"
                         }
+                        
                         st.session_state.hesaplama_tamam = True
-                        status.update(label="✅ İşlem Tamamlandı!", state="complete")
-                        st.rerun()
-                else:
-                    st.error("ETL başarısız oldu.")
-            except Exception as e:
-                st.error(f"Hata: {str(e)}")
+                        status.update(label="✅ İşlem Tamamlandı!", state="complete", expanded=False)
+                        time.sleep(1)
+                        st.rerun() # Sonuç ekranına geçiş
+                        
+                    except Exception as e:
+                        st.error(f"Hata: {e}")
 
-    # --- SONUÇ EKRANI (Görsel Bölüm) ---
-    if st.session_state.hesaplama_tamam:
+    # DURUM 3: Hesaplama bitmişse -> Sadece Sonuçları Göster
+    elif st.session_state.hesaplama_tamam:
+        
+        st.toast("Hesaplama başarıyla tamamlandı. Raporlarınız aşağıdadır.", icon="✅")
         st.divider()
+        
         col1, col2, col3, col4 = st.columns(4)
         m = st.session_state.metrikler
         col1.metric("Toplam Alacak", m["alacak"], delta="Fark Tutarı")
@@ -1403,21 +1427,52 @@ def main():
         col4.metric("Hafta Tatili", m["ht"], delta="Pazar")
 
         st.subheader("📥 Raporları İndir")
-        c1, c2 = st.columns(2)
         
-        # Alacak Raporu İndir
-        alacak_dosya_adi = "HASSAS_ALACAK_RAPORU.xlsx"
-        alacak_yolu = os.path.join(paths["RAPOR"], alacak_dosya_adi)
+        # Ekranı şu oranlarda bölüyoruz: [Boşluk(1) - Buton(2) - Buton(2) - Boşluk(1)]
+        # Bu sayede butonlar ortada toplanır.
+        bosluk_sol, col_btn1, col_btn2, bosluk_sag = st.columns([1, 2, 2, 1])
+        
+        # ALACAK RAPORU (Sol Buton)
+        alacak_yolu = os.path.join(paths["RAPOR"], "HASSAS_ALACAK_RAPORU.xlsx")
         if os.path.exists(alacak_yolu):
             with open(alacak_yolu, "rb") as f:
-                c1.download_button("💰 Alacak Raporu", f, file_name=alacak_dosya_adi, key="dl_alacak_btn")
+                # Butonu col_btn1 içine koyuyoruz ve genişletiyoruz
+                with col_btn1:
+                    st.download_button(
+                        "💰 Alacak Raporu", 
+                        f, 
+                        file_name="HASSAS_ALACAK_RAPORU.xlsx", 
+                        key="dl_alacak_btn",
+                        use_container_width=True # Butonu sütuna yayar, şık durur
+                    )
 
-        # Puantaj İndir
+        # PUANTAJ (Sağ Buton)
         p_dosyalar = [f for f in os.listdir(paths["PUANTAJ"]) if f.endswith('.xlsx')]
         if p_dosyalar:
             p_yolu = os.path.join(paths["PUANTAJ"], p_dosyalar[0])
             with open(p_yolu, "rb") as f:
-                c2.download_button("📊 Görsel Puantaj", f, file_name="Puantaj.xlsx", key="dl_puan_btn")
+                # Butonu col_btn2 içine koyuyoruz ve genişletiyoruz
+                with col_btn2:
+                    st.download_button(
+                        "📊 Görsel Puantaj", 
+                        f, 
+                        file_name="Puantaj.xlsx", 
+                        key="dl_puan_btn",
+                        use_container_width=True # Butonu sütuna yayar
+                    )
+        
+        st.write("") # Biraz boşluk bırakalım
+        
+        # Ekranı Sol(1) - Orta(2) - Sağ(1) oranında bölüyoruz
+        col_sol, col_orta, col_sag = st.columns([1, 2, 1])
+        
+        with col_orta:
+            # Butonu sadece orta sütuna koyuyoruz
+            if st.button("🔄 Yeni Hesaplama Yap", use_container_width=True):
+                 st.session_state.hesaplama_tamam = False
+                 st.session_state.ham_veri_onizleme = None
+                 st.session_state.reset_counter += 1 # Dosya yükleyicileri de temizlesin
+                 st.rerun()
 
 def auto_garbage_collector(max_age_seconds=1800): # 7200 saniye = 2 Saat
     """
