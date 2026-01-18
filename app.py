@@ -1,9 +1,3 @@
-"""
-Profesyonel Puantaj ve Alacak Hesaplama Sistemi
-================================================
-Bordro okuma ve finansal hesaplama - ORİJİNAL NOTEBOOK MANTIĞI
-"""
-
 import pandas as pd
 import numpy as np
 import os
@@ -614,6 +608,7 @@ class BordroReader:
                     # Değişkenleri sıfırla
                     p_fm, p_ubgt, p_ht, p_sorumluluk = 0.0, 0.0, 0.0, 0.0
                     p_ayni, p_izin, p_diger, p_agi, p_net = 0.0, 0.0, 0.0, 0.0, 0.0
+                    p_fm_saat = 0.0 
 
                     # --- TARAMA MANTIĞI (Aynı kaldı) ---
                     for line in lines:
@@ -682,14 +677,22 @@ class BordroReader:
                                         current_brut_ucret = 0.0
                                         current_saat_ucreti = 0.0
 
-                        # DİĞER KALEMLER
+                        # --- HEM SAATİ OKU HEM DE GEREKİRSE ÜCRETİ HESAPLA ---
                         elif any(x in line_lower for x in ["fazla mesai", "f.mesai", "fm ", "f. mesai"]):
                             p_fm += val_tutar
+                            
+                            # 1. YENİ ÖZELLİK: PDF'ten okunan saati havuzda topla
+                            if val_miktar > 0:
+                                p_fm_saat += val_miktar
+
                             if current_saat_ucreti == 0 and val_miktar > 0:
                                 calculated = val_tutar / (val_miktar * 1.5)
+                                # Mantıklı bir aralıkta mı? (Örn: 50 TL - 2000 TL arası)
                                 if 50 < calculated < 2000:
                                     current_saat_ucreti = calculated
-                                    ham_aylik = calculated * 225
+                                    # Eğer brüt ücret de boş kalmışsa, onu da buradan tahmin et
+                                    if current_brut_ucret == 0:
+                                        current_brut_ucret = round(calculated * 225, 2)
                         
                         elif any(x in line_lower for x in ["genel tatil m", "bayram mesai", "resmi tatil"]):
                             p_ubgt += val_tutar
@@ -712,6 +715,7 @@ class BordroReader:
                         mevcut = next((item for item in veriler if item["Donem_Kodu"] == current_donem), None)
                         if mevcut:
                             mevcut['Odenen_FM_TL'] += p_fm
+                            mevcut['Odenen_FM_Saat'] += p_fm_saat # Topla
                             mevcut['Odenen_UBGT_TL'] += p_ubgt
                             mevcut['Odenen_HT_TL'] += p_ht
                             mevcut['Odenen_Sorumluluk_TL'] += p_sorumluluk
@@ -731,6 +735,7 @@ class BordroReader:
                                 'Bordro_Saat_Ucreti': round(current_saat_ucreti, 2),
                                 'Calisilan_Gun_Sayisi': current_gun_sayisi,
                                 'Odenen_FM_TL': round(p_fm, 2),
+                                'Odenen_FM_Saat': round(p_fm_saat, 2), # YENİ ALAN
                                 'Odenen_UBGT_TL': round(p_ubgt, 2),
                                 'Odenen_HT_TL': round(p_ht, 2),
                                 'Odenen_Sorumluluk_TL': round(p_sorumluluk, 2),
@@ -748,7 +753,7 @@ class BordroReader:
         if veriler:
             df_ret = pd.DataFrame(veriler)
             # Eksik kolonları doldurma
-            cols = ['Bordro_Brut_Ucret', 'Calisilan_Gun_Sayisi', 'Odenen_Sorumluluk_TL', 
+            cols = ['Bordro_Brut_Ucret', 'Calisilan_Gun_Sayisi', 'Odenen_Sorumluluk_TL', 'Odenen_FM_Saat',
                    'Odenen_Ayni_Yardim_TL', 'Odenen_Yillik_Izin_TL', 'Odenen_Diger_TL', 
                    'Odenen_AGI_TL', 'Odenen_Net_TL']
             for c in cols:
@@ -767,6 +772,7 @@ class BordroReader:
             'Bordro_Saat_Ucreti': 0.0,
             'Calisilan_Gun_Sayisi': 0,
             'Odenen_FM_TL': 0.0,
+            'Odenen_FM_Saat': 0.0, # Eklendi
             'Odenen_UBGT_TL': 0.0,
             'Odenen_HT_TL': 0.0,
             'Odenen_Net_TL': 0.0
@@ -1050,6 +1056,10 @@ class ExcelGenerator:
         
         # --- FİNANSAL HESAPLAMALAR ---
         ana['Bordro_Saat_Ucreti'] = ana['Bordro_Saat_Ucreti'].replace(0, np.nan).ffill().bfill().fillna(0).astype(float).round(2)
+
+        # EĞER PDF'TE OKUNAN SAAT VARSA, ONU KULLAN
+        if 'Odenen_FM_Saat' not in ana.columns:
+            ana['Odenen_FM_Saat'] = 0.0
     
         ana['Hak_FM_Saat'] = ana['Hak_FM_Saat'].apply(lambda x: float(Decimal(str(x)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)))
         
@@ -1155,7 +1165,7 @@ class ExcelGenerator:
         # Günlük ücreti de Aylık / 30 mantığıyla göster (Sizin istediğiniz mantık)
         b_export['Gunluk_Ucret_Brut'] = round(b_export['Aylik_Ucret_Brut'] / 30, 2)
 
-        b_export['FM_Saati'] = b_export['Hak_FM_Saat']
+        b_export['FM_Saati'] = b_export['Odenen_FM_Saat']
         
         # Eksik sütunları tamamla
         yeni_sutunlar = ['Odenen_Sorumluluk_TL', 'Odenen_Ayni_Yardim_TL', 'Odenen_Yillik_Izin_TL', 'Odenen_Diger_TL', 'Odenen_AGI_TL', 'Odenen_Net_TL']
@@ -1487,6 +1497,7 @@ def main():
                         # Detaylı hata analizi için:
                         import traceback
                         st.code(traceback.format_exc())
+                        st.stop()
 
     # DURUM 3: Hesaplama bitmişse -> Sadece Sonuçları Göster
     elif st.session_state.hesaplama_tamam:
@@ -1515,7 +1526,7 @@ def main():
             with open(alacak_yolu, "rb") as f:
                 with col_btn1:
                     st.download_button(
-                        f"💰 {"ALACAK RAPORU"}", # Buton üzerinde dosya adı görünsün
+                        "💰 ALACAK RAPORU", # Buton üzerinde dosya adı görünsün
                         f, 
                         file_name=dosya_adi, 
                         key="dl_alacak_btn",
@@ -1530,7 +1541,7 @@ def main():
             with open(p_yolu, "rb") as f:
                 with col_btn2:
                     st.download_button(
-                        f"📊 {"PUANTAJ"}", 
+                        "📊 PUANTAJ", 
                         f, 
                         file_name=dosya_adi, 
                         key="dl_puan_btn",
