@@ -593,8 +593,8 @@ class BordroReader:
                         # Basit kontrol: Hedef isim metin içinde geçiyor mu?
                         if norm_hedef not in norm_text:
                             # Debug Logu: Neden atlandığını göster
-                            print(f"❌ Sayfa {sayfa_no} ATLANDI. (Aranan: '{hedef_isim}', Sayfada Eşleşme Bulunamadı)")
-                            continue # Bir sonraki sayfaya geç
+                            print(f"❌ Sayfa {sayfa_no} ATLANDI. (Aranan: '{hedef_isim}', Sayfada Eşleşme Bulunamadı. Ancak yine de okundu.)")
+                            #continue # Bir sonraki sayfaya geç
                         else:
                             print(f"✅ Sayfa {sayfa_no} İŞLENİYOR. (Personel Doğrulandı: '{hedef_isim}')")
                     # ---------------------------------------------------------
